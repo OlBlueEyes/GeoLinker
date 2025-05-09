@@ -1,0 +1,43 @@
+import { Entity, PrimaryGeneratedColumn, Column, JoinColumn, LineString } from 'typeorm';
+
+@Entity('datahub_0430.final_link_table')
+export class FinalLinkTable {
+  @PrimaryGeneratedColumn('increment', { type: 'int' })
+  id: number;
+
+  @Column('geometry', {
+    spatialFeatureType: 'LineString',
+    srid: 4326,
+    nullable: true,
+  })
+  geom: LineString;
+
+  @Column({ type: 'varchar' })
+  osm_id: string;
+
+  @Column({ type: 'varchar' })
+  osm_type: string;
+
+  @Column({ type: 'varchar', nullable: true })
+  oneway: string;
+
+  @Column({ type: 'varchar', nullable: true })
+  @JoinColumn({ name: 'name_ko' })
+  name_ko: string;
+
+  @Column({ type: 'varchar', nullable: true })
+  @JoinColumn({ name: 'name_en' })
+  name_en: string;
+
+  @Column({ type: 'varchar' })
+  highway: string;
+
+  @Column({ type: 'int' })
+  start_node: number;
+
+  @Column({ type: 'int' })
+  end_node: number;
+
+  @Column({ type: 'timestamp', nullable: true })
+  expiration_date: Date;
+}
