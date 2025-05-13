@@ -12,10 +12,16 @@ import {
 } from '../types/map-matching-types.interface';
 import { LoggingUtil } from './logger.util';
 import { EnvConfigService } from 'src/config/env-config.service';
+import { WINSTON_MODULE_PROVIDER } from 'nest-winston';
+import { Inject } from '@nestjs/common';
+import { Logger } from 'winston';
 
 @Injectable()
 export class MapMatchingHelper {
   constructor(
+    @Inject(WINSTON_MODULE_PROVIDER)
+    private readonly logger: Logger,
+
     @InjectRepository(Node)
     private readonly nodeRepository: Repository<Node>,
     @InjectRepository(Frame)
@@ -78,9 +84,8 @@ export class MapMatchingHelper {
           frame.geom,
           link.oppositeNode.id,
         );
-        this.loggingUtil.logToFile(
-          `Distance from Frame ${frame.id} to Node ${link.oppositeNode.id}: ${currentDistance}`,
-          this.envConfigService.matchedLog,
+        this.logger.info(
+          `[MAP-MATCHING] Distance from Frame ${frame.id} to Node ${link.oppositeNode.id}: ${currentDistance}`,
         );
         // 거리 변화의 방향 확인 (가까워지다가 멀어지는 시점에서 멈춤)
         if (currentDistance > previousDistance) break;
@@ -104,9 +109,8 @@ export class MapMatchingHelper {
           );
           projectedPoints.push(projectedPoint);
         } else {
-          this.loggingUtil.logToFile(
-            `Skipping frame ${comparisonFrame.id} due to distance > ${this.envConfigService.gpsThreshold}m`,
-            this.envConfigService.unmatchedLog,
+          this.logger.warn(
+            `[UNMATCHED] Skipping frame ${comparisonFrame.id} due to distance > ${this.envConfigService.gpsThreshold}m`,
           );
         }
       }
@@ -121,31 +125,27 @@ export class MapMatchingHelper {
       // projectedLineString 길이 계산
       const projectedLineStringLength =
         await this.calculateLineStringLength(projectedLineString);
-      this.loggingUtil.logToFile(
-        `Link ${link.linkid} <--> ProjectedLineStringLength is : ${projectedLineStringLength}m`,
-        this.envConfigService.matchedLog,
+      this.logger.info(
+        `[MAP-MATCHING] Link ${link.linkid} <--> ProjectedLineStringLength is : ${projectedLineStringLength}m`,
       );
       if (projectedLineStringLength < 3) {
-        this.loggingUtil.logToFile(
-          `Link ${link.linkid} length is less than 5m: ${projectedLineStringLength}m`,
-          this.envConfigService.matchedLog,
+        this.logger.info(
+          `[MAP-MATCHING] Link ${link.linkid} length is less than 5m: ${projectedLineStringLength}m`,
         );
       }
-      this.loggingUtil.logToFile(
-        `file: matchFrameAndLinkData.ts:131 ~ MatchFrameToLinkData ~ lineString:${JSON.stringify(
+      this.logger.info(
+        `[MAP-MATCHING] file: matchFrameAndLinkData.ts:131 ~ MatchFrameToLinkData ~ lineString:${JSON.stringify(
           lineString,
           null,
           2,
         )} | lastProcessedFrameIndex : ${JSON.stringify(startIdx)}`,
-        this.envConfigService.matchedLog,
       );
-      this.loggingUtil.logToFile(
-        `file: matchFrameAndLinkData.ts:131 ~ MatchFrameToLinkData ~ projectedLineString:${JSON.stringify(
+      this.logger.info(
+        `[MAP-MATCHING] file: matchFrameAndLinkData.ts:131 ~ MatchFrameToLinkData ~ projectedLineString:${JSON.stringify(
           projectedLineString,
           null,
           2,
         )} | lastProcessedFrameIndex : ${JSON.stringify(startIdx)}`,
-        this.envConfigService.matchedLog,
       );
       lineStringsWithNodes.push({
         lineString,
@@ -197,7 +197,6 @@ export class MapMatchingHelper {
       `SELECT ST_Distance($1::geography, $2::geography) AS distance;`,
       [pointGeom1, pointGeom2],
     )) as { distance: number }[];
-    // this.loggingUtil.logToFile(`calculateDistanceBetweenPoints ~ result[0]?.distance: ${result[0]?.distance}`, this.UNMATCHED_LOG);
     return result[0]?.distance || Number.MAX_VALUE;
   }
 
@@ -254,7 +253,6 @@ export class MapMatchingHelper {
       link: LinkWithOppositeNode;
       distances: number[];
     }[],
-    // frames: any[],
   ): Promise<{
     link: LinkWithOppositeNode;
     lastFrameInSegment: number;
@@ -273,9 +271,7 @@ export class MapMatchingHelper {
     } | null = null;
 
     let bestHausdorffDistance = Number.MAX_VALUE;
-    // let bestFrechetDistance = Number.MAX_VALUE;
     let maxProjectedLineStringLength = 0;
-    // let bestMatchScore = Number.MAX_VALUE;
     for (const {
       lineString,
       projectedLineString,
@@ -293,17 +289,15 @@ export class MapMatchingHelper {
       const projectedLineStringLength =
         await this.calculateLineStringLength(projectedLineString);
       if (projectedLineStringLength < 3) {
-        this.loggingUtil.logToFile(
-          `Link ${link.linkid} is excluded due to short length: ${projectedLineStringLength}m`,
-          this.envConfigService.matchedLog,
+        this.logger.info(
+          `[MAP-MATCHING] Link ${link.linkid} is excluded due to short length: ${projectedLineStringLength}m`,
         );
         // 가장 긴 길이를 가진 Link를 추적하여 fallbackLink 설정
         if (projectedLineStringLength > maxProjectedLineStringLength) {
           maxProjectedLineStringLength = projectedLineStringLength;
           fallbackLink = { link, lastFrameInSegment, distances: [] };
-          this.loggingUtil.logToFile(
-            `file: matchFrameAndLinkData.ts:321 ~ fallbackLink:${JSON.stringify(fallbackLink, null, 2)}`,
-            this.envConfigService.matchedLog,
+          this.logger.info(
+            `[MAP-MATCHING] file: matchFrameAndLinkData.ts:321 ~ fallbackLink:${JSON.stringify(fallbackLink, null, 2)}`,
           );
         }
         continue; // 다음 Link로 넘어감
@@ -313,23 +307,24 @@ export class MapMatchingHelper {
         projectedLineString,
       );
 
-      const logMessage = [
-        `file: matchFrameAndLinkData.ts:283 ~ projectedLineString: ${JSON.stringify(projectedLineString)}`,
-        `file: matchFrameAndLinkData.ts:283 ~ lineString: ${JSON.stringify(lineString)}`,
-        `Hausdorff distance between lineString and Link ${link.linkid}: ${hausdorffDistance}`,
-      ].join('\n');
-
-      this.loggingUtil.logToFile(logMessage, this.envConfigService.resultLog);
-      this.loggingUtil.logToFile(logMessage, this.envConfigService.matchedLog);
+      this.logger.info(
+        `[MAP-MATCHING] file: matchFrameAndLinkData.ts:283 ~ projectedLineString: ${JSON.stringify(projectedLineString)}`,
+      );
+      this.logger.info(
+        `[MAP-MATCHING] file: matchFrameAndLinkData.ts:283 ~ lineString: ${JSON.stringify(lineString)}`,
+      );
+      this.logger.info(
+        `[MAP-MATCHING] Hausdorff distance between lineString and Link ${link.linkid}: ${hausdorffDistance}`,
+      );
 
       if (hausdorffDistance < bestHausdorffDistance) {
         bestHausdorffDistance = hausdorffDistance;
         bestLink = { link, lastFrameInSegment, distances };
       }
+
       if (!bestLink && fallbackLink) {
-        this.loggingUtil.logToFile(
-          `All links are too short, selecting the fallback link: ${JSON.stringify(fallbackLink, null, 2)}`,
-          this.envConfigService.matchedLog,
+        this.logger.info(
+          `[MAP-MATCHING] All links are too short, selecting the fallback link: ${JSON.stringify(fallbackLink, null, 2)}`,
         );
         bestLink = fallbackLink;
       }

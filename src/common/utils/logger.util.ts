@@ -144,17 +144,16 @@ export class LoggingUtil {
     fs.appendFileSync(fullPath, logmsg + '\n');
   }
 
-  processStartTime(funcName: string): { startTime: number } {
+  processStartTime(funcName: string): number {
     const processStartMessage = `Start ${funcName}`;
     this.logger.info(processStartMessage);
-    return { startTime: Date.now() }; // 시작 시간을 반환
+    return Date.now(); // 시작 시간을 반환
   }
 
   processEndTime(funcName: string, startTime: number): void {
     const processEndMessage = `End ${funcName}`;
     this.logger.info(processEndMessage);
-    const endTime = Date.now();
-    const durationMessage = `${funcName} took ${endTime - startTime}ms`;
+    const durationMessage = `${funcName} took ${this.formatSeconds((Date.now() - startTime) / 1000)}(${Date.now() - startTime}ms)`;
     this.logger.info(durationMessage);
   }
 

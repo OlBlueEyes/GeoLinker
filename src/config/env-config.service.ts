@@ -40,7 +40,7 @@ export class EnvConfigService {
   public readonly matchedLog: string;
   public readonly resultLog: string;
   public readonly gpsThreshold: number;
-  public readonly matchingTimer: string;
+  public readonly matchingProcess: string;
 
   constructor(private config: ConfigService) {
     this.dbType = getRequiredEnvStr(this.config, 'DB_TYPE');
@@ -83,10 +83,7 @@ export class EnvConfigService {
     this.resultLog = getRequiredEnvStr(this.config, 'RESULT_LOG');
     this.matchedLog = getRequiredEnvStr(this.config, 'MATCHED_LOG');
     this.unmatchedLog = getRequiredEnvStr(this.config, 'UNMATCHED_LOG');
-    this.matchingTimer = getRequiredEnvStr(
-      this.config,
-      'MATCHING_PROCESS_TIME',
-    );
+    this.matchingProcess = getRequiredEnvStr(this.config, 'MATCHING_PROCESS');
     this.gpsThreshold = getRequiredEnvInt(
       this.config,
       'GPS_DISTANCE_THRESHOLD',

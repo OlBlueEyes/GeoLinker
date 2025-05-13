@@ -160,7 +160,16 @@ export function winstonLoggerFactory(
       filename: `${matchLogDir}/${envConfigService.matchedLog}`,
       level: 'info',
       format: winston.format((info) =>
-        isStringMessage(info) && info.message.includes('[MATCHED]')
+        isStringMessage(info) && info.message.includes('[MAP-MATCHING]')
+          ? info
+          : false,
+      )(),
+    }),
+    new winston.transports.File({
+      filename: `${matchLogDir}/${envConfigService.matchedLog}`,
+      level: 'warn',
+      format: winston.format((info) =>
+        isStringMessage(info) && info.message.includes('[MATCHING WARNING]')
           ? info
           : false,
       )(),

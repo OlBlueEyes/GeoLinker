@@ -1,5 +1,5 @@
 import { InjectRepository } from '@nestjs/typeorm';
-import { Injectable, Logger } from '@nestjs/common';
+import { Injectable } from '@nestjs/common';
 import { Link } from 'src/shared/entities/link.entity';
 import { Repository } from 'typeorm';
 import { Frame } from 'src/shared/entities/frame.entity';
@@ -9,13 +9,19 @@ import {
 } from 'src/common/types/map-matching-types.interface';
 import { MapMatchingHelper } from 'src/common/utils/map-matching-helper';
 import { EnvConfigService } from 'src/config/env-config.service';
+import { WINSTON_MODULE_PROVIDER } from 'nest-winston';
 import { LoggingUtil } from 'src/common/utils/logger.util';
+import { Inject } from '@nestjs/common';
+import { Logger } from 'winston';
 
 @Injectable()
 export class MapMatchingService {
-  private readonly logger = new Logger(MapMatchingService.name);
+  // private readonly logger = new Logger(MapMatchingService.name);
 
   constructor(
+    @Inject(WINSTON_MODULE_PROVIDER)
+    private readonly logger: Logger,
+
     @InjectRepository(Link)
     private readonly linkRepository: Repository<Link>,
 
@@ -37,13 +43,11 @@ export class MapMatchingService {
 
     for (const record of records) {
       const recordId = record.record_id;
-      // const recordProcessStart = this.loggingUtil.processStartTime(
-      //   `matchFramesByGroup - Record ${recordId}`,
-      // );
-      this.loggingUtil.logToFile(
-        `Processing record_id: ${recordId}`,
-        this.envConfigService.matchedLog,
+
+      const recordProcessStart = this.loggingUtil.processStartTime(
+        `matchFramesByGroup - Record ${recordId}`,
       );
+      this.logger.info(`[MAP-MATCHING] Processing record_id: ${recordId}`);
       type FrameRow = { id: number; geom: string; yaw: number };
       const frames = (await this.frameRepository.query(
         `SELECT id, geom, yaw FROM ${this.envConfigService.schema}.frame WHERE record_id = $1 AND link_id IS NULL ORDER BY id ASC;`,
@@ -60,7 +64,9 @@ export class MapMatchingService {
       )) as BBoxResultRow[];
 
       const expandedBBox = bboxResult[0]?.expanded;
-      console.log(`expandedBBox: ${JSON.stringify(expandedBBox)}`);
+      this.logger.info(
+        `[MAP-MATCHING] expandedBBox: ${JSON.stringify(expandedBBox)}`,
+      );
 
       type LinkRow = {
         linkid: number;
@@ -73,21 +79,13 @@ export class MapMatchingService {
         `SELECT id AS linkid, geom AS link_geom, start_node, end_node FROM ${this.envConfigService.schema}.link WHERE ST_Intersects(geom, $1);`,
         [expandedBBox],
       )) as LinkRow[];
-      console.log(`bboxResult : ${bboxResult.length}`);
-      this.loggingUtil.logToFile(
-        `bboxResult : ${bboxResult.length}`,
-        this.envConfigService.matchedLog,
+
+      this.logger.info(`[MAP-MATCHING] bboxResult : ${bboxResult.length}`);
+      this.logger.info(
+        `[MAP-MATCHING] filteredLinks : ${filteredLinks.length}`,
       );
-      console.log(`filteredLinks : ${filteredLinks.length}`);
-      this.loggingUtil.logToFile(
-        `filteredLinks : ${filteredLinks.length}`,
-        this.envConfigService.matchedLog,
-      );
-      console.log(`Frames : ${frames.length}`);
-      this.loggingUtil.logToFile(
-        `Frames : ${frames.length}`,
-        this.envConfigService.matchedLog,
-      );
+      this.logger.info(`[MAP-MATCHING] Frames : ${frames.length}`);
+
       let lastProcessedFrameIndex = 0;
       let currentNode: { id: number; geom: string } | null = null;
       while (lastProcessedFrameIndex < frames.length) {
@@ -96,15 +94,10 @@ export class MapMatchingService {
           currentNode = await this.mapMatchingHelper.findClosestNode(
             frames[lastProcessedFrameIndex].geom,
           );
-          this.loggingUtil.logToFile(
-            `Starting matchFramesToLinks with initial currentNode: ${JSON.stringify(currentNode, null, 2)}`,
-            this.envConfigService.matchedLog,
-          );
+
           if (!currentNode) {
-            this.logger.warn(`No closest node found for the initial frame.`);
-            this.loggingUtil.logToFile(
-              `No closest node found for the initial frame. : ${recordId}`,
-              this.envConfigService.matchedLog,
+            this.logger.warn(
+              `[MATCHING WARNING] No closest node found for the initial frame. : ${recordId}`,
             );
             return; // 더 이상 처리할 데이터가 없음을 의미
           }
@@ -118,18 +111,14 @@ export class MapMatchingService {
         );
         lastProcessedFrameIndex = result.lastProcessedFrameIndex;
         currentNode = result.currentNode; // 업데이트된 currentNode 사용
-        this.loggingUtil.logToFile(
-          `lastProcessedFrameIndex : ${lastProcessedFrameIndex} | frames.length : ${frames.length}`,
-          this.envConfigService.matchedLog,
-        );
-        console.log(
-          `lastProcessedFrameIndex : ${lastProcessedFrameIndex} | frames.length : ${frames.length}`,
+        this.logger.info(
+          `[MAP-MATCHING] lastProcessedFrameIndex : ${lastProcessedFrameIndex} | frames.length : ${frames.length}`,
         );
       }
-      // this.loggingUtil.processEndTime(
-      //   `matchFramesByGroup - Record ${recordId}`,
-      //   recordProcessStart,
-      // );
+      this.loggingUtil.processEndTime(
+        `matchFramesByGroup - Record ${recordId}`,
+        recordProcessStart,
+      );
     }
   }
   // 전체 Frame 데이터를 처리하여 각 Frame이 속하는 Link를 매칭
@@ -149,25 +138,25 @@ export class MapMatchingService {
   }> {
     // // 1. 첫 번째 또는 이후 Frame에서 가장 가까운 Node 찾기
     const processingFrameId = frames[lastProcessedFrameIndex]?.id ?? -1;
-    this.loggingUtil.logToFile(
-      `Starting matchFramesToLinks with initial currentNode: ${JSON.stringify(currentNode, null, 2)}`,
-      this.envConfigService.matchedLog,
+
+    this.logger.info(
+      `[MAP-MATCHING] Starting matchFramesToLinks with initial currentNode: ${JSON.stringify(currentNode, null, 2)}`,
     );
+
     if (!currentNode) {
-      this.logger.warn(`No closest node found for the initial frame.`);
-      this.loggingUtil.logToFile(
-        `No closest node found for the initial frame. : ${processingFrameId}`,
-        this.envConfigService.matchedLog,
+      this.logger.warn(
+        `[MATCHING WARNING] No closest node found for the initial frame. : ${processingFrameId}`,
       );
       return {
         lastProcessedFrameIndex: frames.length,
         currentNode: { id: -1, geom: '' }, // 의미 없는 기본값
       };
     }
-    this.loggingUtil.logToFile(
-      `Processing from Frame ID ${processingFrameId}`,
-      this.envConfigService.matchedLog,
+
+    this.logger.info(
+      `[MAP-MATCHING] Processing from Frame ID ${processingFrameId}`,
     );
+
     // 2. 현재 Node와 연결된 Link와 각 Link의 반대편 Node 가져오기
     const candidateLinkIds = candidateLinks.map((l) => l.linkid);
     const links: LinkWithOppositeNode[] =
@@ -175,57 +164,57 @@ export class MapMatchingService {
         candidateLinkIds,
         currentNode.id,
       );
-    console.log(`currentNode.id : ${currentNode.id}`);
-    this.loggingUtil.logToFile(
-      `links.length : ${links.length}`,
-      this.envConfigService.matchedLog,
-    );
+
+    this.logger.info(`[MAP-MATCHING] currentNode.id : ${currentNode.id}`);
+    this.logger.info(`[MAP-MATCHING] links.length : ${links.length}`);
+
     const nearbyLinks: LinkWithOppositeNode[] =
       await this.mapMatchingHelper.getNearbyLinksFromCandidates(
         candidateLinkIds,
         frames[lastProcessedFrameIndex].geom,
         currentNode.id,
       );
-    this.loggingUtil.logToFile(
-      `nearbyLinks.length : ${nearbyLinks.length}`,
-      this.envConfigService.matchedLog,
+    this.logger.info(
+      `[MAP-MATCHING] nearbyLinks.length : ${nearbyLinks.length}`,
     );
     links.push(...nearbyLinks);
+
     // 짧은 Link 검사
     const shortLinks: LinkWithOppositeNode[] = [];
     for (const link of links) {
       const length = await this.mapMatchingHelper.calculateLineStringLength(
         link.linkGeom,
       );
-      this.loggingUtil.logToFile(
-        `file: matchFrameAndLinkData.ts:138 ~ MatchFrameToLinkData ~ length: ${length} | ${JSON.stringify(link)}`,
-        this.envConfigService.matchedLog,
+
+      this.logger.info(
+        `[MAP-MATCHING] file: matchFrameAndLinkData.ts:138 ~ MatchFrameToLinkData ~ length: ${length} | ${JSON.stringify(link)}`,
       );
+
       if (length < 7) {
         shortLinks.push(link);
       }
     }
     // 짧은 Link가 있는 경우 해당 반대편 Node에서 추가적인 Link들 가져옴
     for (const shortLink of shortLinks) {
-      console.log(
-        `file: matchFrameAndLinkData.ts:117 ~ MatchFrameToLinkData ~ shortLink:${JSON.stringify(shortLink)},`,
+      this.logger.info(
+        `[MAP-MATCHING] file: matchFrameAndLinkData.ts:117 ~ MatchFrameToLinkData ~ shortLink:${JSON.stringify(shortLink)},`,
       );
       const oppositeLinks =
         await this.mapMatchingHelper.getLinksAndOppositeNodesFromCandidates(
           candidateLinkIds,
           shortLink.oppositeNode.id,
         );
-      this.loggingUtil.logToFile(
-        `oppositeLinks.length : ${oppositeLinks.length}`,
-        this.envConfigService.matchedLog,
+      this.logger.info(
+        `[MAP-MATCHING] oppositeLinks.length : ${oppositeLinks.length}`,
       );
+
       links.push(...oppositeLinks); // 기존 links에 추가
     }
+
     // 중복 제거
     const uniqueLinks = this.mapMatchingHelper.removeDuplicateLinks(links);
-    this.loggingUtil.logToFile(
-      `Fetched links connected to Node ${currentNode.id}: ${JSON.stringify(uniqueLinks, null, 2)}`,
-      this.envConfigService.matchedLog,
+    this.logger.info(
+      `[MAP-MATCHING] Fetched links connected to Node ${currentNode.id}: ${JSON.stringify(uniqueLinks, null, 2)}`,
     );
     // 3. 각 oppositeNode에 대해 LineString 생성 및 변곡점 계산
     const lineStringsWithNodes =
@@ -234,15 +223,17 @@ export class MapMatchingService {
         lastProcessedFrameIndex,
         uniqueLinks,
       );
+
     // 4. 각 LineString에 대해 Hausdorff 거리 측정
     const bestLink =
       await this.mapMatchingHelper.findBestLinkForLineStrings(
         lineStringsWithNodes,
       );
-    this.loggingUtil.logToFile(
-      `Best matching Link found: ${JSON.stringify(bestLink, null, 2)}`,
-      this.envConfigService.matchedLog,
+
+    this.logger.info(
+      `[MAP-MATCHING] Best matching Link found: ${JSON.stringify(bestLink, null, 2)}`,
     );
+
     // 5. 매칭된 Link에 대해 Frame 매칭 후 다음 Node로 이동
     if (bestLink) {
       const { link, lastFrameInSegment, distances } = bestLink as {
@@ -250,6 +241,7 @@ export class MapMatchingService {
         lastFrameInSegment: number;
         distances: number[];
       };
+
       const matchedFrameId = frames[lastProcessedFrameIndex]?.id;
       const startIdx = lastProcessedFrameIndex;
       const endIdx = frames.findIndex(
@@ -266,27 +258,27 @@ export class MapMatchingService {
 
       lastProcessedFrameIndex = endIdx + 1;
       currentNode = link.oppositeNode;
-      this.loggingUtil.logToFile(
-        `Updated currentNode to Node ${currentNode.id}, continuing from Frame ID ${matchedFrameId}`,
-        this.envConfigService.matchedLog,
+
+      this.logger.info(
+        `[MAP-MATCHING] Updated currentNode to Node ${currentNode.id}, continuing from Frame ID ${matchedFrameId}`,
       );
     } else {
       const unmatchedFrameId = frames[lastProcessedFrameIndex]?.id;
       this.logger.warn(
-        `No matching Link found for Frame ID ${unmatchedFrameId}`,
+        `[MATCHING WARNING] No matching Link found for Frame ID ${unmatchedFrameId}`,
       );
-      this.loggingUtil.logToFile(
-        `No matching Link found for Frame ID ${unmatchedFrameId}`,
-        this.envConfigService.unmatchedLog,
+      this.logger.warn(
+        `[UNMATCHED] No matching Link found for Frame ID ${unmatchedFrameId}`,
       );
-      this.loggingUtil.logToFile(
-        `No matching Link found for Frame ID ${unmatchedFrameId}`,
+      this.logger.info(
+        `[MAP-MATCHING] No matching Link found for Frame ID ${unmatchedFrameId}`,
+      );
+
+      this.logger.info(
+        `[MAP-MATCHING] Finding new closest Node from Frame ID ${unmatchedFrameId}`,
         this.envConfigService.matchedLog,
       );
-      this.loggingUtil.logToFile(
-        `Finding new closest Node from Frame ID ${unmatchedFrameId}`,
-        this.envConfigService.matchedLog,
-      );
+
       lastProcessedFrameIndex++;
       currentNode = await this.mapMatchingHelper.findClosestNode(
         frames[lastProcessedFrameIndex]?.geom,
@@ -304,13 +296,14 @@ export class MapMatchingService {
       `UPDATE ${this.envConfigService.schema}.frame SET link_id = $1 WHERE id = $2;`,
       [linkId, frameId],
     );
-    this.loggingUtil.logToFile(
-      `Frame ${frameId} matched to Link ${linkId}`,
+
+    this.logger.info(
+      `[MAP-MATCHING] Frame ${frameId} matched to Link ${linkId}`,
       this.envConfigService.matchedLog,
     );
-    this.loggingUtil.logToFile(
-      `Frame ${frameId} matched to Link ${linkId}`,
-      this.envConfigService.resultLog,
+    this.logger.info(
+      `[RESULT] Frame ${frameId} matched to Link ${linkId}`,
+      this.envConfigService.matchedLog,
     );
   }
 
@@ -328,9 +321,8 @@ export class MapMatchingService {
         await this.updateFrameLink(frameId, linkId);
       } else {
         await this.updateFrameLink(frameId, null as unknown as number);
-        this.loggingUtil.logToFile(
-          `Frame ${frameId} skipped due to distance ${distance}m > 30m`,
-          this.envConfigService.unmatchedLog,
+        this.logger.warn(
+          `[UNMATCHED] Frame ${frameId} skipped due to distance ${distance}m > 30m`,
         );
       }
     }
