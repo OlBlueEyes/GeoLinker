@@ -1,4 +1,4 @@
-import { Controller } from '@nestjs/common';
+import { Controller, Param } from '@nestjs/common';
 import { Post } from '@nestjs/common';
 import { ImportOsmDataService } from './import-osm-data.service';
 
@@ -7,8 +7,8 @@ export class ImportOsmDataController {
   constructor(private readonly importOsmData: ImportOsmDataService) {}
 
   // Final Import Code
-  @Post('importOsmData')
-  async processNodeLinkData(): Promise<void> {
-    await this.importOsmData.processNodeLinkData();
+  @Post('importOsmData/:city')
+  async processNodeLinkData(@Param('city') city: string): Promise<void> {
+    await this.importOsmData.processNodeLinkData(city);
   }
 }

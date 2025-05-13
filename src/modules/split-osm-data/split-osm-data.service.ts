@@ -1,64 +1,60 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import { Injectable } from '@nestjs/common';
-import { ConfigService } from '@nestjs/config';
 import { DataSource } from 'typeorm';
 import { featureCollection } from '@turf/turf';
 import { FeatureCollection, LineString, Point } from 'geojson';
-import { getRequiredEnvStr } from 'src/common/utils/get-required-env';
 import {
   SplitLinkSegment,
   OsmLinkRow,
 } from 'src/common/types/link-data.interface';
+import { LoggingUtil } from 'src/common/utils/logger.util';
+import { OSM_COUNTRIES } from 'src/common/constants/osm-country.constants';
+import { WINSTON_MODULE_PROVIDER } from 'nest-winston';
+import { Inject } from '@nestjs/common';
+import { Logger } from 'winston';
+import { EnvConfigService } from 'src/config/env-config.service';
 
 @Injectable()
 export class SplitOsmDataService {
-  public splitError: string;
-  public linkSplitLog: string;
-  public splitProgress: string;
-  public processTime: string;
-  public osmDataPath: string;
   public targetCountry: string;
   constructor(
-    private configService: ConfigService,
+    @Inject(WINSTON_MODULE_PROVIDER)
+    private readonly logger: Logger,
     private dataSource: DataSource,
-  ) {
-    this.splitError = getRequiredEnvStr(this.configService, 'SPLIT_ERROR');
-    this.linkSplitLog = getRequiredEnvStr(this.configService, 'LINK_SPLIT');
-    this.splitProgress = getRequiredEnvStr(
-      this.configService,
-      'SPLIT_PROGRESS',
-    );
-    this.processTime = getRequiredEnvStr(this.configService, 'PROCESS_TIME');
-    this.osmDataPath = getRequiredEnvStr(this.configService, 'OSM_DATA_PATH');
-    this.targetCountry = getRequiredEnvStr(
-      this.configService,
-      'TARGET_COUNTRY_KOREA',
-    );
-    // this.targetCountry = getRequiredEnvStr(
-    //   this.configService,
-    //   'TARGET_COUNTRY_SAUDI',
-    // );
-    // this.targetCountry = getRequiredEnvStr(
-    //   this.configService,
-    //   'TARGET_COUNTRY_SINGAPORE',
-    // );
-    // this.targetCountry = getRequiredEnvStr(
-    //   this.configService,
-    //   'TARGET_COUNTRY_UAE',
-    // );
-  }
+    private readonly loggingUtil: LoggingUtil,
+    private readonly envConfigService: EnvConfigService,
+  ) {}
 
-  async processSplitForAllAreas(): Promise<void> {
-    const startSplit = this.processStartTime('processSplitForAllAreas');
-    const rootPath = this.getOutputFolder();
-    const targetCountry = this.getTargetCountry();
-    const countryPath = path.join(rootPath, targetCountry);
+  async processSplitForAllAreas(countryName: string): Promise<void> {
+    const normalize = (str: string) =>
+      str.toLowerCase().replace(/[^a-z0-9]/gi, '');
+
+    const matched = OSM_COUNTRIES.find(
+      (c) => normalize(c.name) === normalize(countryName),
+    );
+
+    if (!matched) {
+      const errMsg = `Invalid country name: ${countryName}`;
+      this.logSplit(errMsg, this.envConfigService.splitError);
+      console.error(errMsg);
+      this.logger.error(`[SPLIT ERROR] Invalid country name: ${countryName}`);
+      return;
+    }
+    this.targetCountry = matched.name;
+
+    this.logger.info(`[SPLIT TIME] Start processSplitForAllAreas`);
+
+    const rootPath = this.loggingUtil.getOutputFolder();
+    const countryPath = path.join(rootPath, this.targetCountry);
 
     if (!fs.existsSync(countryPath)) {
       const cnfMsg = `Country folder not found: ${countryPath}`;
       console.log(cnfMsg);
-      this.logToFile(cnfMsg, this.splitError);
+      this.logSplit(cnfMsg, this.envConfigService.splitError);
+      this.logger.error(
+        `[SPLIT ERROR] Country folder not found: ${countryPath}`,
+      );
       return;
     }
 
@@ -69,9 +65,12 @@ export class SplitOsmDataService {
 
     const startTime = Date.now();
     fs.writeFileSync(
-      this.splitProgress,
-      `Split Link Progress Log\nStart Time: ${new Date().toISOString()}\n`,
+      this.envConfigService.splitProgress,
+      `Split Link Progress Log - Start Time: ${new Date().toISOString()}\n`,
       'utf-8',
+    );
+    this.logger.info(
+      `[SPLIT] Split Link Progress Log - Start Time: ${new Date().toISOString()}\n`,
     );
 
     for (let i = 0; i < areaDirs.length; i++) {
@@ -93,8 +92,14 @@ export class SplitOsmDataService {
         if (!fs.existsSync(nodePath)) {
           const skipMsg = `Node file not found, skipping: ${nodePath}`;
           console.warn(skipMsg);
-          this.logToFile(skipMsg, this.splitError);
-          fs.appendFileSync(this.splitProgress, `${skipMsg}\n`);
+          this.logSplit(skipMsg, this.envConfigService.splitError);
+          fs.appendFileSync(
+            this.envConfigService.splitProgress,
+            `${skipMsg}\n`,
+          );
+          this.logger.warn(
+            `[SPLIT WARNING] Node file not found, skipping: ${nodePath}`,
+          );
           continue;
         }
 
@@ -106,32 +111,35 @@ export class SplitOsmDataService {
 
         const progressMsg = `[${i + 1}/${totalAreas}] ${area.name} / ${linkFile} | ${progress.toFixed(
           2,
-        )}% complete | ETA ${this.formatSeconds(eta)}`;
+        )}% complete | ETA ${this.loggingUtil.formatSeconds(eta)}`;
         console.log(progressMsg);
-        this.logToFile(progressMsg, this.splitProgress);
-        fs.appendFileSync(this.splitProgress, `${progressMsg}\n`);
+        this.logSplit(progressMsg, this.envConfigService.splitProgress);
+        fs.appendFileSync(
+          this.envConfigService.splitProgress,
+          `${progressMsg}\n`,
+        );
+        this.logger.info(
+          `[SPLIT] [${i + 1}/${totalAreas}] ${area.name} / ${linkFile} | ${progress.toFixed(
+            2,
+          )}% complete | ETA ${this.loggingUtil.formatSeconds(eta)}`,
+        );
 
         await this.splitLinkDataByNode(linkPath, nodePath, outputPath);
       }
     }
 
-    const endMsg = `All areas processed successfully! Total Time: ${this.formatSeconds(
+    const endMsg = `All areas processed successfully! Total Time: ${this.loggingUtil.formatSeconds(
       (Date.now() - startTime) / 1000,
     )}`;
     console.log(endMsg);
-    this.logToFile(endMsg, this.splitProgress);
-    // fs.appendFileSync(this.splitProgress, `${endMsg}\n`);
-    this.processEndTime('processSplitForAllAreas', startSplit);
-  }
-
-  private getTargetCountry(): string {
-    if (!this.targetCountry) {
-      const tnfMsg = 'TARGET_COUNTRY not set, using default "South_Korea"';
-      console.warn(tnfMsg);
-      this.logToFile(tnfMsg, this.splitError);
-      return 'South_Korea';
-    }
-    return this.targetCountry;
+    this.logSplit(endMsg, this.envConfigService.splitProgress);
+    this.logger.info(
+      `[SPLIT] All areas processed successfully! Total Time: ${this.loggingUtil.formatSeconds(
+        (Date.now() - startTime) / 1000,
+      )}`,
+    );
+    // fs.appendFileSync(this.envConfigService.splitProgress, `${endMsg}\n`);
+    // this.loggingUtil.processEndTime('processSplitForAllAreas', startSplit);
   }
 
   async splitLinkDataByNode(
@@ -139,7 +147,7 @@ export class SplitOsmDataService {
     nodePath: string,
     outputPath: string,
   ) {
-    const start = this.processStartTime('splitLinksByNodes');
+    // const start = this.loggingUtil.processStartTime('splitLinksByNodes');
     const areaKey = this.sanitizeTableName(
       path.basename(outputPath).replace('.geojson', ''),
     );
@@ -148,48 +156,54 @@ export class SplitOsmDataService {
     const tempNodeTable = `temp_node_${areaKey}`;
     const splitLinksTable = `split_links_${areaKey}`;
 
-    const startCreateTempTables = this.processStartTime('createTempTables');
+    // const startCreateTempTables =
+    //   this.loggingUtil.processStartTime('createTempTables');
     await this.createTempTables(tempLinkTable, tempNodeTable, splitLinksTable);
-    this.processEndTime('createTempTables', startCreateTempTables);
+    // this.loggingUtil.processEndTime('createTempTables', startCreateTempTables);
 
-    const startInsertDataIntoTempTables = this.processStartTime(
-      'insertDataIntoTempTables',
-    );
+    // const startInsertDataIntoTempTables = this.loggingUtil.processStartTime(
+    //   'insertDataIntoTempTables',
+    // );
     await this.insertDataIntoTempTables(
       tempLinkTable,
       tempNodeTable,
       linkPath,
       nodePath,
     );
-    this.processEndTime(
-      'insertDataIntoTempTables',
-      startInsertDataIntoTempTables,
-    );
+    // this.loggingUtil.processEndTime(
+    //   'insertDataIntoTempTables',
+    //   startInsertDataIntoTempTables,
+    // );
 
-    const startInitialSplitLinks = this.processStartTime('initialSplitLinks');
+    // const startInitialSplitLinks =
+    //   this.loggingUtil.processStartTime('initialSplitLinks');
     await this.initialSplitLinks(tempLinkTable, tempNodeTable, splitLinksTable);
-    this.processEndTime('initialSplitLinks', startInitialSplitLinks);
+    // this.loggingUtil.processEndTime(
+    //   'initialSplitLinks',
+    //   startInitialSplitLinks,
+    // );
 
-    const startPostResplitLinks = this.processStartTime('postResplitLinks');
+    // const startPostResplitLinks =
+    //   this.loggingUtil.processStartTime('postResplitLinks');
     // await this.postResplitLinks(splitLinksTable, tempNodeTable, tempLinkTable);
     await this.postResplitLinks(splitLinksTable, tempNodeTable);
-    this.processEndTime('postResplitLinks', startPostResplitLinks);
+    // this.loggingUtil.processEndTime('postResplitLinks', startPostResplitLinks);
 
-    const startFinalSelfIntersectionSplit = this.processStartTime(
-      'finalSelfIntersectionSplit',
-    );
+    // const startFinalSelfIntersectionSplit = this.loggingUtil.processStartTime(
+    //   'finalSelfIntersectionSplit',
+    // );
     await this.finalSelfIntersectionSplit(splitLinksTable);
-    this.processEndTime(
-      'finalSelfIntersectionSplit',
-      startFinalSelfIntersectionSplit,
-    );
+    // this.loggingUtil.processEndTime(
+    //   'finalSelfIntersectionSplit',
+    //   startFinalSelfIntersectionSplit,
+    // );
 
     const finalGeoJson = await this.exportSplitLinks(splitLinksTable);
     this.saveJSONToFile(finalGeoJson, outputPath);
 
     await this.dropTempTables(tempLinkTable, tempNodeTable, splitLinksTable);
 
-    this.processEndTime('splitLinksByNodes', start);
+    // this.loggingUtil.processEndTime('splitLinksByNodes', start);
   }
 
   private sanitizeTableName(name: string): string {
@@ -295,7 +309,10 @@ export class SplitOsmDataService {
 
     const segCountMsg = `[PostResplit] Found ${problematicSegments.length} problematic segments.`;
     console.log(segCountMsg);
-    this.logToFile(segCountMsg, this.linkSplitLog);
+    this.logSplit(segCountMsg, this.envConfigService.linkSplit);
+    this.logger.info(
+      `[SPLIT] PostResplit - Found ${problematicSegments.length} problematic segments.`,
+    );
 
     let resplitCount = 0;
 
@@ -313,7 +330,10 @@ export class SplitOsmDataService {
       if (!nodesResult[0] || !nodesResult[0].geom) {
         const nodeNotFoundMsg = `[PostResplit] No nearby nodes found for segment ID ${id}, skipping.`;
         console.warn(nodeNotFoundMsg);
-        this.logToFile(nodeNotFoundMsg, this.splitError);
+        this.logSplit(nodeNotFoundMsg, this.envConfigService.splitError);
+        this.logger.warn(
+          `[SPLIT WARNING] PostResplit - No nearby nodes found for segment ID ${id}, skipping.`,
+        );
         continue;
       }
 
@@ -328,7 +348,10 @@ export class SplitOsmDataService {
       if (nodeCount <= 1) {
         const skipSplitMsg = `[PostResplit] Only ${nodeCount} node(s) near segment ID ${id}, skipping split.`;
         console.log(skipSplitMsg);
-        this.logToFile(skipSplitMsg, this.linkSplitLog);
+        this.logSplit(skipSplitMsg, this.envConfigService.linkSplit);
+        this.logger.info(
+          `[SPLIT] PostResplit - Only ${nodeCount} node(s) near segment ID ${id}, skipping split.`,
+        );
         continue;
       }
 
@@ -365,7 +388,10 @@ export class SplitOsmDataService {
     }
     const resplitMsg = `[PostResplit] Successfully re-split ${resplitCount} segments out of ${problematicSegments.length}.`;
     console.log(resplitMsg);
-    this.logToFile(resplitMsg, this.linkSplitLog);
+    this.logSplit(resplitMsg, this.envConfigService.linkSplit);
+    this.logger.info(
+      `[SPLIT] PostResplit - Successfully re-split ${resplitCount} segments out of ${problematicSegments.length}.`,
+    );
   }
 
   private async finalSelfIntersectionSplit(splitLinksTable: string) {
@@ -377,7 +403,10 @@ export class SplitOsmDataService {
     const beforeCount = parseInt(beforeResult[0].count, 10);
     const countSiMsg = `[SelfIntersection] Before fixing: ${beforeCount} self-intersected segments.`;
     console.log(countSiMsg);
-    this.logToFile(countSiMsg, this.linkSplitLog);
+    this.logSplit(countSiMsg, this.envConfigService.linkSplit);
+    this.logger.info(
+      `[SPLIT] SelfIntersection - Before fixing: ${beforeCount} self-intersected segments.`,
+    );
 
     const selfIntersectedSegments: SplitLinkSegment[] = await this.dataSource
       .query(`
@@ -466,9 +495,15 @@ export class SplitOsmDataService {
     const afterFixMsg = `[SelfIntersection] After fixing: ${afterCount} self-intersected segments remaining.`;
     const fixedSegCountMsg = `[SelfIntersection] Fixed ${beforeCount - afterCount} segments out of ${beforeCount}.`;
     console.log(afterFixMsg);
-    this.logToFile(afterFixMsg, this.linkSplitLog);
+    this.logSplit(afterFixMsg, this.envConfigService.linkSplit);
     console.log(fixedSegCountMsg);
-    this.logToFile(fixedSegCountMsg, this.linkSplitLog);
+    this.logSplit(fixedSegCountMsg, this.envConfigService.linkSplit);
+    this.logger.info(
+      `[SPLIT] SelfIntersection - After fixing: ${afterCount} self-intersected segments remaining.`,
+    );
+    this.logger.info(
+      `[SPLIT] SelfIntersection - Fixed ${beforeCount - afterCount} segments out of ${beforeCount}.`,
+    );
   }
 
   private async exportSplitLinks(
@@ -506,7 +541,8 @@ export class SplitOsmDataService {
     fs.writeFileSync(outputPath, JSON.stringify(data, null, 2), 'utf-8');
     const saveJsonMsg = `Saved GeoJSON to ${outputPath}`;
     console.log(saveJsonMsg);
-    this.logToFile(saveJsonMsg, this.linkSplitLog);
+    this.logSplit(saveJsonMsg, this.envConfigService.linkSplit);
+    this.logger.info(`[SPLIT] Saved GeoJSON to ${outputPath}`);
   }
 
   private async dropTempTables(...tables: string[]) {
@@ -515,64 +551,8 @@ export class SplitOsmDataService {
     }
   }
 
-  private getOutputFolder(): string {
-    if (!this.osmDataPath) {
-      throw new Error('OSM_DATA_PATH is not defined in environment variables.');
-    }
-    const today = new Date();
-    const formatted = `${today.getFullYear()}${String(today.getMonth() + 1).padStart(2, '0')}${String(
-      today.getDate(),
-    ).padStart(2, '0')}`;
-    return path.join(this.osmDataPath, `${formatted}_OSM`);
-  }
-
-  private processStartTime(funcName: string): number {
-    const startMsg = `Start ${funcName}`;
-    console.log(startMsg);
-    this.logToFile(startMsg, this.processTime);
-    return Date.now();
-  }
-
-  private processEndTime(funcName: string, startTime: number) {
-    const endMsg = `End ${funcName}, took ${Date.now() - startTime} ms`;
-    console.log(endMsg);
-    this.logToFile(endMsg, this.processTime);
-    console.log();
-  }
-
-  private formatSeconds(seconds: number): string {
-    const m = Math.floor(seconds / 60);
-    const s = Math.floor(seconds % 60);
-    return `${m}m ${s}s`;
-  }
-
-  private getLogFolder(): string {
-    const basePath = this.configService.get<string>('OSM_DATA_PATH');
-    if (!basePath) {
-      throw new Error(
-        'OSM_DATA_PATH is not defined in the environment variables.',
-      );
-    }
-    return path.join(this.getOutputFolder(), 'log', this.targetCountry);
-  }
-
-  // 로그 파일에 메시지 기록하는 함수 수정
-  private logToFile(message: string, fileName: string) {
-    const logFolderPath = this.getLogFolder();
-    const filePath = path.join(logFolderPath, fileName);
-
-    try {
-      if (!fs.existsSync(logFolderPath)) {
-        fs.mkdirSync(logFolderPath, { recursive: true });
-      }
-      const logmsg = `${new Date().toISOString()} - ${message}`;
-      fs.appendFileSync(filePath, logmsg + '\n', 'utf-8');
-    } catch (error) {
-      const errorMessage =
-        error instanceof Error ? error.message : String(error);
-      const logErrorMsg = `Failed to write log to file: ${errorMessage}`;
-      console.error(logErrorMsg);
-      this.logToFile(logErrorMsg, this.splitError);
-    }
+  private logSplit(message: string, fileName: string) {
+    const safeCountry = this.targetCountry ?? 'unknown';
+    this.loggingUtil.splitLogToFile(message, fileName, safeCountry);
   }
 }

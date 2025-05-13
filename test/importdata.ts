@@ -19,11 +19,10 @@ import {
   OverpassResponse,
 } from 'src/common/types/overpass-element.interface';
 import { WINSTON_MODULE_PROVIDER } from 'nest-winston';
-import { LoggingUtil } from 'src/common/utils/logger.util';
+import { EnvConfigService } from 'src/config/env-config.service';
 import { Inject } from '@nestjs/common';
 import { Logger } from 'winston';
 import { OSM_COUNTRIES } from 'src/common/constants/osm-country.constants';
-import { EnvConfigService } from 'src/config/env-config.service';
 
 @Injectable()
 export class ImportOsmDataService {
@@ -34,15 +33,10 @@ export class ImportOsmDataService {
     private readonly httpService: HttpService,
     private configService: ConfigService,
     private readonly dataSource: DataSource,
-    private readonly loggingUtil: LoggingUtil,
     private readonly envConfigService: EnvConfigService,
   ) {}
 
   async processNodeLinkData(city: string) {
-    const { end: endProcessData } = this.loggingUtil.startTimer(
-      'processNodeLinkData',
-      'IMPORT',
-    );
     const normalize = (str: string) =>
       str.toLowerCase().replace(/[^a-z0-9]/gi, '');
 
@@ -54,32 +48,30 @@ export class ImportOsmDataService {
       this.logger.error(`[IMPORT ERROR] Unknown country: ${city}`);
       throw new Error(`Unknown country: ${city}`);
     }
+
+    this.logger.info(`[IMPORT TIME] Start processNodeLinkData`);
     const filePathList = await this.fetchHighwayData(targetCountry);
     await this.generateNodesFromLinkFiles(filePathList);
 
-    endProcessData();
+    this.logger.info(`[IMPORT TIME] End processNodeLinkData`);
   }
 
   async fetchHighwayData(targetCountry: {
     name: string;
     relationId: number;
   }): Promise<string[]> {
-    const { end: endFetchData } = this.loggingUtil.startTimer(
-      'fetchHighwayData',
-      'IMPORT',
-    );
     const filePathList: string[] = [];
 
     const areaId = 3600000000 + targetCountry.relationId;
 
+    const baseUrl = 'https://overpass-api.de/api/interpreter';
     const maxRetries = 3;
 
-    this.logger.info(`getCountryName Start`);
     const getCountryName = async (): Promise<string> => {
       try {
         const res = await lastValueFrom(
           this.httpService.post(
-            this.envConfigService.overpassUrl,
+            baseUrl,
             `
             [out:json][timeout:25];
             relation(${targetCountry.relationId});
@@ -130,23 +122,15 @@ export class ImportOsmDataService {
     }[] = [];
 
     try {
-      const { end: endGetCountryName } = this.loggingUtil.startTimer(
-        'Query - getCountryName',
-        'IMPORT',
-      );
       const countryName = await getCountryName();
-      endGetCountryName();
 
       const fetchAdminAreas = async (adminLevel: number) => {
         const res = await lastValueFrom(
-          this.httpService.post(
-            this.envConfigService.overpassUrl,
-            buildAdminAreaQuery(adminLevel),
-            {
-              headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-            },
-          ),
+          this.httpService.post(baseUrl, buildAdminAreaQuery(adminLevel), {
+            headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+          }),
         );
+
         const data = res.data as OverpassResponse;
 
         return data.elements
@@ -162,27 +146,16 @@ export class ImportOsmDataService {
       };
 
       try {
-        const { end: endBuildAdminAreaQuery } = this.loggingUtil.startTimer(
-          'Query - buildAdminAreaQuery',
-          'IMPORT',
-        );
         areaInfoList = await fetchAdminAreas(4);
-        endBuildAdminAreaQuery();
-
         if (areaInfoList.length < 2) {
-          // this.logToFile(
-          //   `admin_level=4 insufficient results (${areaInfoList.length}), retrying with admin_level=6`,
-          //   this.envConfigService.dataImport,
-          // );
+          this.logToFile(
+            `admin_level=4 insufficient results (${areaInfoList.length}), retrying with admin_level=6`,
+            this.envConfigService.dataImport,
+          );
           this.logger.info(
             `[IMPORT] admin_level=4 insufficient results (${areaInfoList.length}), retrying with admin_level=6`,
           );
-          const { end: endBuildAdminAreaQuery } = this.loggingUtil.startTimer(
-            'Query - buildAdminAreaQuery',
-            'IMPORT',
-          );
           areaInfoList = await fetchAdminAreas(6);
-          endBuildAdminAreaQuery();
         }
       } catch (err) {
         if (err instanceof Error) {
@@ -213,6 +186,60 @@ export class ImportOsmDataService {
       throw new Error('Failed to fetch admin areas: Unknown error');
     }
 
+    const highwayQuery = (areaId: number) => `
+    [out:json][timeout:1000];
+    area(${areaId})->.area_0;
+    (
+        node["highway"="living_street"](area.area_0);
+        node["highway"="motorway"](area.area_0);
+        node["highway"="motorway_link"](area.area_0);
+        node["highway"="primary"](area.area_0);
+        node["highway"="primary_link"](area.area_0);
+        node["highway"="residential"](area.area_0);
+        node["highway"="road"](area.area_0);
+        node["highway"="secondary"](area.area_0);
+        node["highway"="secondary_link"](area.area_0);
+        node["highway"="service"](area.area_0);
+        node["highway"="tertiary"](area.area_0);
+        node["highway"="tertiary_link"](area.area_0);
+        node["highway"="trunk"](area.area_0);
+        node["highway"="trunk_link"](area.area_0);
+        node["highway"="unclassified"](area.area_0);
+        way["highway"="living_street"](area.area_0);
+        way["highway"="motorway"](area.area_0);
+        way["highway"="motorway_link"](area.area_0);
+        way["highway"="primary"](area.area_0);
+        way["highway"="primary_link"](area.area_0);
+        way["highway"="residential"](area.area_0);
+        way["highway"="road"](area.area_0);
+        way["highway"="secondary"](area.area_0);
+        way["highway"="secondary_link"](area.area_0);
+        way["highway"="service"](area.area_0);
+        way["highway"="tertiary"](area.area_0);
+        way["highway"="tertiary_link"](area.area_0);
+        way["highway"="trunk"](area.area_0);
+        way["highway"="trunk_link"](area.area_0);
+        way["highway"="unclassified"](area.area_0);
+        relation["highway"="living_street"](area.area_0);
+        relation["highway"="motorway"](area.area_0);
+        relation["highway"="motorway_link"](area.area_0);
+        relation["highway"="primary"](area.area_0);
+        relation["highway"="primary_link"](area.area_0);
+        relation["highway"="residential"](area.area_0);
+        relation["highway"="road"](area.area_0);
+        relation["highway"="secondary"](area.area_0);
+        relation["highway"="secondary_link"](area.area_0);
+        relation["highway"="service"](area.area_0);
+        relation["highway"="tertiary"](area.area_0);
+        relation["highway"="tertiary_link"](area.area_0);
+        relation["highway"="trunk"](area.area_0);
+        relation["highway"="trunk_link"](area.area_0);
+        relation["highway"="unclassified"](area.area_0);
+    );
+    (._;>;);
+    out geom;
+  `;
+
     const failedAreas: {
       areaId: number;
       admin_ko: string;
@@ -220,139 +247,60 @@ export class ImportOsmDataService {
       country: string;
     }[] = [];
 
-    // for (const { areaId, admin_ko, admin_en, country } of areaInfoList) {
-    //   let success = false;
-    //   let attempts = 0;
-
-    //   while (!success && attempts < maxRetries) {
-    //     try {
-    //       const res = await lastValueFrom(
-    //         this.httpService.post(
-    //           this.envConfigService.overpassUrl,
-    //           this.highwayQuery(areaId),
-    //           {
-    //             headers: {
-    //               'Content-Type': 'application/x-www-form-urlencoded',
-    //             },
-    //           },
-    //         ),
-    //       );
-
-    //       if ((res.data as OverpassResponse).elements?.length) {
-    //         const geoJsonData = this.convertToGeoJSON(
-    //           res.data as OverpassResponse,
-    //         );
-    //         console.log(
-    //           ` ImportOsmData ~ fetchHighwayData ~ ${country} - ${admin_en}, :`,
-    //         );
-    //         const sanitizedFileName = this.sanitizeName(
-    //           `${admin_en}_${areaId}.geojson`,
-    //         );
-    //         this.saveLinkJSONToFile(
-    //           geoJsonData,
-    //           admin_en,
-    //           country,
-    //           sanitizedFileName,
-    //         );
-    //         const savedPath = path.join(
-    //           this.getOutputFolder(),
-    //           this.sanitizeName(country),
-    //           this.sanitizeName(admin_en),
-    //           sanitizedFileName,
-    //         );
-    //         filePathList.push(savedPath);
-    //         geoJsonData.features.length = 0;
-    //       }
-    //       success = true;
-    //       // const completeMsg = `${admin_en}(${admin_ko}) (${areaId}) completed`;
-    //       console.log(`completeMsg`);
-    //       // this.logToFile(completeMsg, this.envConfigService.dataImport);
-    //       this.logger.info(
-    //         `[IMPORT] ${admin_en}(${admin_ko}) (${areaId}) completed`,
-    //       );
-    //     } catch (err) {
-    //       attempts++;
-    //       const attemptFaileMsg =
-    //         err instanceof Error
-    //           ? `${admin_en} (${areaId}) attempt ${attempts} failed: ${err.message}`
-    //           : `${admin_en} (${areaId}) attempt ${attempts} failed: unknown error`;
-    //       console.log(`attemptFaileMsg`);
-    //       // this.logToFile(attemptFaileMsg, this.envConfigService.dataImport);
-    //       this.logger.error(`[IMPORT ERROR] ${attemptFaileMsg}`);
-    //     }
-    //   }
-
-    //   if (!success) {
-    //     failedAreas.push({ areaId, admin_ko, admin_en, country });
-    //   }
-    // }
-
-    // for (const { areaId, admin_ko, admin_en, country } of failedAreas) {
-    //   try {
-    //     const res = await lastValueFrom(
-    //       this.httpService.post(
-    //         this.envConfigService.overpassUrl,
-    //         this.highwayQuery(areaId),
-    //         {
-    //           headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-    //         },
-    //       ),
-    //     );
-
-    //     const data = res.data as OverpassResponse;
-    //     if (data?.elements?.length) {
-    //       const geoJsonData = this.convertToGeoJSON(data);
-    //       console.log(
-    //         ` ImportOsmData ~ fetchHighwayData ~ ${country} - ${admin_en}, :`,
-    //       );
-    //       const sanitizedFileName = this.sanitizeName(
-    //         `${admin_en}_${areaId}.geojson`,
-    //       );
-    //       this.saveLinkJSONToFile(
-    //         geoJsonData,
-    //         admin_en,
-    //         country,
-    //         sanitizedFileName,
-    //       );
-    //       const savedPath = path.join(
-    //         this.getOutputFolder(),
-    //         this.sanitizeName(country),
-    //         this.sanitizeName(admin_en),
-    //         sanitizedFileName,
-    //       );
-    //       filePathList.push(savedPath);
-    //       geoJsonData.features.length = 0;
-    //       const retryMsg = `Retry succeeded: ${admin_ko} - ${admin_en} (${areaId})`;
-    //       this.logger.info(`[IMPORT] ${retryMsg}`);
-
-    //       console.log(`retryMsg`);
-    //       // this.logToFile(retryMsg, this.envConfigService.dataImport);
-    //     }
-    //   } catch (err) {
-    //     const failMsg =
-    //       err instanceof Error
-    //         ? `Final failure: ${admin_en} (${areaId}) - ${err.message}`
-    //         : `Final failure: ${admin_en} (${areaId}) - unknown error`;
-    //     console.log(`failMsg`);
-    //     // this.logToFile(failMsg, this.envConfigService.dataImport);
-    //     this.logger.error(`[IMPORT ERROR] ${failMsg}`);
-    //   }
-    // }
-
     for (const { areaId, admin_ko, admin_en, country } of areaInfoList) {
       let success = false;
       let attempts = 0;
 
       while (!success && attempts < maxRetries) {
-        success = await this.fetchAndSaveHighwayData(
-          areaId,
-          admin_ko,
-          admin_en,
-          country,
-          filePathList,
-          false,
-        );
-        attempts++;
+        try {
+          const res = await lastValueFrom(
+            this.httpService.post(baseUrl, highwayQuery(areaId), {
+              headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+            }),
+          );
+
+          if ((res.data as OverpassResponse).elements?.length) {
+            const geoJsonData = this.convertToGeoJSON(
+              res.data as OverpassResponse,
+            );
+            console.log(
+              ` ImportOsmData ~ fetchHighwayData ~ ${country} - ${admin_en}, :`,
+            );
+            const sanitizedFileName = this.sanitizeName(
+              `${admin_en}_${areaId}.geojson`,
+            );
+            this.saveLinkJSONToFile(
+              geoJsonData,
+              admin_en,
+              country,
+              sanitizedFileName,
+            );
+            const savedPath = path.join(
+              this.getOutputFolder(),
+              this.sanitizeName(country),
+              this.sanitizeName(admin_en),
+              sanitizedFileName,
+            );
+            filePathList.push(savedPath);
+            geoJsonData.features.length = 0;
+          }
+          success = true;
+          const completeMsg = `${admin_en}(${admin_ko}) (${areaId}) completed`;
+          console.log(`completeMsg`);
+          this.logToFile(completeMsg, this.envConfigService.dataImport);
+          this.logger.info(
+            `[IMPORT] ${admin_en}(${admin_ko}) (${areaId}) completed`,
+          );
+        } catch (err) {
+          attempts++;
+          const attemptFaileMsg =
+            err instanceof Error
+              ? `${admin_en} (${areaId}) attempt ${attempts} failed: ${err.message}`
+              : `${admin_en} (${areaId}) attempt ${attempts} failed: unknown error`;
+          console.log(`attemptFaileMsg`);
+          this.logToFile(attemptFaileMsg, this.envConfigService.dataImport);
+          this.logger.error(`[IMPORT ERROR] ${attemptFaileMsg}`);
+        }
       }
 
       if (!success) {
@@ -361,17 +309,53 @@ export class ImportOsmDataService {
     }
 
     for (const { areaId, admin_ko, admin_en, country } of failedAreas) {
-      await this.fetchAndSaveHighwayData(
-        areaId,
-        admin_ko,
-        admin_en,
-        country,
-        filePathList,
-        true,
-      );
+      try {
+        const res = await lastValueFrom(
+          this.httpService.post(baseUrl, highwayQuery(areaId), {
+            headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+          }),
+        );
+
+        const data = res.data as OverpassResponse;
+        if (data?.elements?.length) {
+          const geoJsonData = this.convertToGeoJSON(data);
+          console.log(
+            ` ImportOsmData ~ fetchHighwayData ~ ${country} - ${admin_en}, :`,
+          );
+          const sanitizedFileName = this.sanitizeName(
+            `${admin_en}_${areaId}.geojson`,
+          );
+          this.saveLinkJSONToFile(
+            geoJsonData,
+            admin_en,
+            country,
+            sanitizedFileName,
+          );
+          const savedPath = path.join(
+            this.getOutputFolder(),
+            this.sanitizeName(country),
+            this.sanitizeName(admin_en),
+            sanitizedFileName,
+          );
+          filePathList.push(savedPath);
+          geoJsonData.features.length = 0;
+          const retryMsg = `Retry succeeded: ${admin_ko} - ${admin_en} (${areaId})`;
+          this.logger.info(`[IMPORT] ${retryMsg}`);
+
+          console.log(`retryMsg`);
+          this.logToFile(retryMsg, this.envConfigService.dataImport);
+        }
+      } catch (err) {
+        const failMsg =
+          err instanceof Error
+            ? `Final failure: ${admin_en} (${areaId}) - ${err.message}`
+            : `Final failure: ${admin_en} (${areaId}) - unknown error`;
+        console.log(`failMsg`);
+        this.logToFile(failMsg, this.envConfigService.dataImport);
+        this.logger.error(`[IMPORT ERROR] ${failMsg}`);
+      }
     }
 
-    endFetchData();
     return filePathList;
   }
 
@@ -627,7 +611,7 @@ export class ImportOsmDataService {
       fs.writeFileSync(filePath, JSON.stringify(data, null, 2), 'utf-8');
       const jsonSavedMsg = `GeoJSON data saved to ${filePath}`;
       console.log(jsonSavedMsg);
-      // this.logToFile(jsonSavedMsg, this.envConfigService.dataImport);
+      this.logToFile(jsonSavedMsg, this.envConfigService.dataImport);
       this.logger.info(`[IMPORT] ${jsonSavedMsg}`);
     } catch (error) {
       const jsonErrorMsg =
@@ -635,133 +619,52 @@ export class ImportOsmDataService {
           ? `Failed to save GeoJSON data: ${error.message}`
           : 'Failed to save GeoJSON data: unknown error';
       console.log(jsonErrorMsg);
-      // this.logToFile(jsonErrorMsg, this.envConfigService.dataImport);
+      this.logToFile(jsonErrorMsg, this.envConfigService.dataImport);
       this.logger.error(`[IMPORT ERROR] ${jsonErrorMsg}`);
 
       throw error;
     }
   }
 
-  private sanitizeName(name: string): string {
-    return name.replace(/\s+/g, '_').trim();
-  }
+  // 로그 파일에 메시지 기록하는 함수 수정
+  private logToFile(message: string, fileName: string) {
+    const logFolderPath = this.getLogFolder();
+    const filePath = path.join(logFolderPath, fileName);
+    // console.log(`ImportNodeLinkData ~ logToFile ~ filePath:`, filePath);
 
-  private async fetchAndSaveHighwayData(
-    areaId: number,
-    admin_ko: string,
-    admin_en: string,
-    country: string,
-    filePathList: string[],
-    isRetry = false,
-  ): Promise<boolean> {
     try {
-      const { end: endHighwayQuery } = this.loggingUtil.startTimer(
-        'Query - highwayQuery',
-        'IMPORT',
-      );
-      const res = await lastValueFrom(
-        this.httpService.post(
-          this.envConfigService.overpassUrl,
-          this.highwayQuery(areaId),
-          {
-            headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-          },
-        ),
-      );
-      endHighwayQuery();
-
-      const data = res.data as OverpassResponse;
-      if (data?.elements?.length) {
-        const geoJsonData = this.convertToGeoJSON(data);
-        const sanitizedFileName = this.sanitizeName(
-          `${admin_en}_${areaId}.geojson`,
-        );
-        this.saveLinkJSONToFile(
-          geoJsonData,
-          admin_en,
-          country,
-          sanitizedFileName,
-        );
-        const savedPath = path.join(
-          this.getOutputFolder(),
-          this.sanitizeName(country),
-          this.sanitizeName(admin_en),
-          sanitizedFileName,
-        );
-        filePathList.push(savedPath);
-        geoJsonData.features.length = 0;
-
-        const successMsg = isRetry
-          ? `Retry succeeded: ${admin_ko} - ${admin_en} (${areaId})`
-          : `${admin_en}(${admin_ko}) (${areaId}) completed`;
-
-        this.logger.info(`[IMPORT] ${successMsg}`);
+      if (!fs.existsSync(logFolderPath)) {
+        fs.mkdirSync(logFolderPath, { recursive: true });
       }
-      return true;
-    } catch (err) {
-      const failMsg =
-        err instanceof Error
-          ? `${admin_en} (${areaId}) failed: ${err.message}`
-          : `${admin_en} (${areaId}) failed: unknown error`;
-      const logPrefix = isRetry ? 'Final failure' : 'attempt';
-      this.logger.error(`[IMPORT ERROR] ${logPrefix} - ${failMsg}`);
-      return false;
+      const logmsg = `${new Date().toISOString()} - ${message}`;
+      fs.appendFileSync(filePath, logmsg + '\n', 'utf-8');
+      // console.log(logmsg);
+    } catch (error) {
+      const logErrorMsg =
+        error instanceof Error
+          ? `Failed to write log to file: ${error.message}`
+          : 'Failed to write log to file: unknown error';
+      console.error(logErrorMsg);
+      this.logger.error(`[IMPORT ERROR] ${logErrorMsg}`);
     }
   }
 
-  private highwayQuery(areaId: number): string {
-    return `
-    [out:json][timeout:1000];
-    area(${areaId})->.area_0;
-    (
-        node["highway"="living_street"](area.area_0);
-        node["highway"="motorway"](area.area_0);
-        node["highway"="motorway_link"](area.area_0);
-        node["highway"="primary"](area.area_0);
-        node["highway"="primary_link"](area.area_0);
-        node["highway"="residential"](area.area_0);
-        node["highway"="road"](area.area_0);
-        node["highway"="secondary"](area.area_0);
-        node["highway"="secondary_link"](area.area_0);
-        node["highway"="service"](area.area_0);
-        node["highway"="tertiary"](area.area_0);
-        node["highway"="tertiary_link"](area.area_0);
-        node["highway"="trunk"](area.area_0);
-        node["highway"="trunk_link"](area.area_0);
-        node["highway"="unclassified"](area.area_0);
-        way["highway"="living_street"](area.area_0);
-        way["highway"="motorway"](area.area_0);
-        way["highway"="motorway_link"](area.area_0);
-        way["highway"="primary"](area.area_0);
-        way["highway"="primary_link"](area.area_0);
-        way["highway"="residential"](area.area_0);
-        way["highway"="road"](area.area_0);
-        way["highway"="secondary"](area.area_0);
-        way["highway"="secondary_link"](area.area_0);
-        way["highway"="service"](area.area_0);
-        way["highway"="tertiary"](area.area_0);
-        way["highway"="tertiary_link"](area.area_0);
-        way["highway"="trunk"](area.area_0);
-        way["highway"="trunk_link"](area.area_0);
-        way["highway"="unclassified"](area.area_0);
-        relation["highway"="living_street"](area.area_0);
-        relation["highway"="motorway"](area.area_0);
-        relation["highway"="motorway_link"](area.area_0);
-        relation["highway"="primary"](area.area_0);
-        relation["highway"="primary_link"](area.area_0);
-        relation["highway"="residential"](area.area_0);
-        relation["highway"="road"](area.area_0);
-        relation["highway"="secondary"](area.area_0);
-        relation["highway"="secondary_link"](area.area_0);
-        relation["highway"="service"](area.area_0);
-        relation["highway"="tertiary"](area.area_0);
-        relation["highway"="tertiary_link"](area.area_0);
-        relation["highway"="trunk"](area.area_0);
-        relation["highway"="trunk_link"](area.area_0);
-        relation["highway"="unclassified"](area.area_0);
-    );
-    (._;>;);
-    out geom;
-    `;
+  private getLogFolder(): string {
+    const basePath = this.configService.get<string>('LOG_PATH');
+    if (!basePath) {
+      this.logger.error(
+        `[IMPORT ERROR] LOG_PATH is not defined in the environment variables.`,
+      );
+      throw new Error('LOG_PATH is not defined in the environment variables.');
+    }
+    const date = new Date();
+    const formattedDate = `${date.getFullYear()}${String(date.getMonth() + 1).padStart(2, '0')}${String(
+      date.getDate(),
+    ).padStart(2, '0')}`;
+    return path.join(basePath, `${formattedDate}_OSM`, 'log');
+  }
+
+  private sanitizeName(name: string): string {
+    return name.replace(/\s+/g, '_').trim();
   }
 }
