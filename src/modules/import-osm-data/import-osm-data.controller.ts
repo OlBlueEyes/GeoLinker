@@ -11,4 +11,11 @@ export class ImportOsmDataController {
   async processNodeLinkData(@Param('city') city: string): Promise<void> {
     await this.importOsmData.processNodeLinkData(city);
   }
+
+  @Post('importAdminBoundaries/:countryName')
+  async importAdminBoundaries(
+    @Param('countryName') countryName: string,
+  ): Promise<void> {
+    await this.importOsmData.importAdminBoundaries(countryName);
+  }
 }

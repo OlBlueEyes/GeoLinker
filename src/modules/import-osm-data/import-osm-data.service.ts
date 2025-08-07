@@ -12,6 +12,8 @@ import {
   LineString,
   Point,
   Geometry,
+  // Polygon,
+  MultiPolygon,
 } from 'geojson';
 import { DataSource } from 'typeorm';
 import {
@@ -19,7 +21,7 @@ import {
   OverpassResponse,
 } from 'src/common/types/overpass-element.interface';
 import { WINSTON_MODULE_PROVIDER } from 'nest-winston';
-import { LoggingUtil } from 'src/common/utils/logger.util';
+import { LoggingUtil } from 'src/modules/map-matching/utils/logger.util';
 import { Inject } from '@nestjs/common';
 import { Logger } from 'winston';
 import { OSM_COUNTRIES } from 'src/common/constants/osm-country.constants';
@@ -219,125 +221,6 @@ export class ImportOsmDataService {
       admin_en: string;
       country: string;
     }[] = [];
-
-    // for (const { areaId, admin_ko, admin_en, country } of areaInfoList) {
-    //   let success = false;
-    //   let attempts = 0;
-
-    //   while (!success && attempts < maxRetries) {
-    //     try {
-    //       const res = await lastValueFrom(
-    //         this.httpService.post(
-    //           this.envConfigService.overpassUrl,
-    //           this.highwayQuery(areaId),
-    //           {
-    //             headers: {
-    //               'Content-Type': 'application/x-www-form-urlencoded',
-    //             },
-    //           },
-    //         ),
-    //       );
-
-    //       if ((res.data as OverpassResponse).elements?.length) {
-    //         const geoJsonData = this.convertToGeoJSON(
-    //           res.data as OverpassResponse,
-    //         );
-    //         console.log(
-    //           ` ImportOsmData ~ fetchHighwayData ~ ${country} - ${admin_en}, :`,
-    //         );
-    //         const sanitizedFileName = this.sanitizeName(
-    //           `${admin_en}_${areaId}.geojson`,
-    //         );
-    //         this.saveLinkJSONToFile(
-    //           geoJsonData,
-    //           admin_en,
-    //           country,
-    //           sanitizedFileName,
-    //         );
-    //         const savedPath = path.join(
-    //           this.getOutputFolder(),
-    //           this.sanitizeName(country),
-    //           this.sanitizeName(admin_en),
-    //           sanitizedFileName,
-    //         );
-    //         filePathList.push(savedPath);
-    //         geoJsonData.features.length = 0;
-    //       }
-    //       success = true;
-    //       // const completeMsg = `${admin_en}(${admin_ko}) (${areaId}) completed`;
-    //       console.log(`completeMsg`);
-    //       // this.logToFile(completeMsg, this.envConfigService.dataImport);
-    //       this.logger.info(
-    //         `[IMPORT] ${admin_en}(${admin_ko}) (${areaId}) completed`,
-    //       );
-    //     } catch (err) {
-    //       attempts++;
-    //       const attemptFaileMsg =
-    //         err instanceof Error
-    //           ? `${admin_en} (${areaId}) attempt ${attempts} failed: ${err.message}`
-    //           : `${admin_en} (${areaId}) attempt ${attempts} failed: unknown error`;
-    //       console.log(`attemptFaileMsg`);
-    //       // this.logToFile(attemptFaileMsg, this.envConfigService.dataImport);
-    //       this.logger.error(`[IMPORT ERROR] ${attemptFaileMsg}`);
-    //     }
-    //   }
-
-    //   if (!success) {
-    //     failedAreas.push({ areaId, admin_ko, admin_en, country });
-    //   }
-    // }
-
-    // for (const { areaId, admin_ko, admin_en, country } of failedAreas) {
-    //   try {
-    //     const res = await lastValueFrom(
-    //       this.httpService.post(
-    //         this.envConfigService.overpassUrl,
-    //         this.highwayQuery(areaId),
-    //         {
-    //           headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-    //         },
-    //       ),
-    //     );
-
-    //     const data = res.data as OverpassResponse;
-    //     if (data?.elements?.length) {
-    //       const geoJsonData = this.convertToGeoJSON(data);
-    //       console.log(
-    //         ` ImportOsmData ~ fetchHighwayData ~ ${country} - ${admin_en}, :`,
-    //       );
-    //       const sanitizedFileName = this.sanitizeName(
-    //         `${admin_en}_${areaId}.geojson`,
-    //       );
-    //       this.saveLinkJSONToFile(
-    //         geoJsonData,
-    //         admin_en,
-    //         country,
-    //         sanitizedFileName,
-    //       );
-    //       const savedPath = path.join(
-    //         this.getOutputFolder(),
-    //         this.sanitizeName(country),
-    //         this.sanitizeName(admin_en),
-    //         sanitizedFileName,
-    //       );
-    //       filePathList.push(savedPath);
-    //       geoJsonData.features.length = 0;
-    //       const retryMsg = `Retry succeeded: ${admin_ko} - ${admin_en} (${areaId})`;
-    //       this.logger.info(`[IMPORT] ${retryMsg}`);
-
-    //       console.log(`retryMsg`);
-    //       // this.logToFile(retryMsg, this.envConfigService.dataImport);
-    //     }
-    //   } catch (err) {
-    //     const failMsg =
-    //       err instanceof Error
-    //         ? `Final failure: ${admin_en} (${areaId}) - ${err.message}`
-    //         : `Final failure: ${admin_en} (${areaId}) - unknown error`;
-    //     console.log(`failMsg`);
-    //     // this.logToFile(failMsg, this.envConfigService.dataImport);
-    //     this.logger.error(`[IMPORT ERROR] ${failMsg}`);
-    //   }
-    // }
 
     for (const { areaId, admin_ko, admin_en, country } of areaInfoList) {
       let success = false;
@@ -553,6 +436,7 @@ export class ImportOsmDataService {
           osm_type: 'way',
           highway: tags.highway ?? null,
           oneway: tags.oneway ?? null,
+          layer: tags.layer ?? null,
           name_ko: tags['name:ko'] ?? null,
           name_en: tags['name:en'] ?? null,
         };
@@ -763,5 +647,233 @@ export class ImportOsmDataService {
     (._;>;);
     out geom;
     `;
+  }
+
+  async importAdminBoundaries(countryName: string): Promise<void> {
+    const relations =
+      await this.fetchAdminBoundaryRelationsFromOverpass(countryName);
+    const features = this.convertRelationsToFeatures(relations);
+
+    this.logger.info(
+      `[IMPORT] ${features.length} valid administrative boundaries extracted.`,
+    );
+
+    const geojsonData: FeatureCollection = {
+      type: 'FeatureCollection',
+      features,
+    };
+
+    const filePath = this.saveGeoJSONToFile(countryName, geojsonData);
+    this.logger.info(
+      `[IMPORT] Saved ${features.length} boundaries to ${filePath}`,
+    );
+  }
+
+  // 1. Overpass에서 행정경계 relation 조회
+  private async fetchAdminBoundaryRelationsFromOverpass(
+    countryName: string,
+  ): Promise<OverpassElement[]> {
+    const normalize = (str: string) =>
+      str.toLowerCase().replace(/[^a-z0-9]/gi, '');
+    const target = OSM_COUNTRIES.find(
+      (c) => normalize(c.name) === normalize(countryName),
+    );
+    if (!target) throw new Error(`Unknown country: ${countryName}`);
+
+    const areaId = 3600000000 + target.relationId;
+    const overpassUrl = this.envConfigService.overpassUrl;
+    if (!overpassUrl) throw new Error('Overpass API URL is undefined');
+
+    this.logger.info(
+      `[IMPORT] Sending Overpass query for ${countryName} admin boundaries...`,
+    );
+
+    const query = `
+    [out:json][timeout:180];
+    area(${areaId})->.country;
+    (
+      relation["boundary"="administrative"]["admin_level"](area.country);
+    );
+    out geom;
+    >;
+    out geom;
+  `;
+    this.logger.info(`[IMPORT] Query:\n${query}`);
+
+    this.logger.info(
+      `[IMPORT] Starting Overpass query for admin boundaries...`,
+    );
+
+    const res = await lastValueFrom(
+      this.httpService.post(overpassUrl, query, {
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      }),
+    );
+
+    this.logger.info(`[IMPORT] Overpass query completed, parsing results...`);
+
+    const data = res.data as OverpassResponse;
+
+    this.logger.info(
+      `[IMPORT] Retrieved ${data.elements.length} elements from Overpass.`,
+    );
+
+    return data.elements.filter(
+      (el) =>
+        el.type === 'relation' &&
+        el.tags?.['admin_level'] &&
+        el.tags?.['boundary'] === 'administrative' &&
+        el.tags?.['type'] === 'boundary',
+    );
+  }
+
+  // 2. relation → Feature[] 변환
+  private convertRelationsToFeatures(relations: OverpassElement[]): Feature[] {
+    const features: Feature[] = [];
+
+    for (const rel of relations) {
+      const osm_id = rel.id;
+      const nameKo = rel.tags?.['name:ko'] ?? null;
+      const nameEn = rel.tags?.['name:en'] ?? null;
+      const name = rel.tags?.['name'] ?? null;
+
+      let name_ko = nameKo;
+      let name_en = nameEn;
+
+      if (!name_ko && name && /[가-힣]/.test(name)) {
+        name_ko = name;
+      }
+
+      if (!name_en && name && !/[가-힣]/.test(name)) {
+        name_en = name;
+      }
+
+      const admin_level = parseInt(rel.tags?.['admin_level'] ?? '', 10);
+      if (isNaN(admin_level)) continue;
+
+      if (
+        !('members' in rel) ||
+        !Array.isArray((rel as { members: unknown }).members)
+      )
+        continue;
+
+      const members = (
+        rel as {
+          members: {
+            role: string;
+            geometry?: { lon: number; lat: number }[];
+          }[];
+        }
+      ).members;
+
+      const outerWays = members.filter(
+        (m) => m.role === 'outer' && Array.isArray(m.geometry),
+      );
+      if (outerWays.length === 0) continue;
+
+      const rings = this.buildOrderedRings(
+        outerWays as { geometry: { lon: number; lat: number }[] }[],
+      );
+      if (rings.length === 0) continue;
+
+      const multiPolygon: MultiPolygon = {
+        type: 'MultiPolygon',
+        coordinates: rings
+          .map((coords) => {
+            if (coords.length < 3) return null;
+            const [first, last] = [coords[0], coords[coords.length - 1]];
+            if (first[0] !== last[0] || first[1] !== last[1])
+              coords.push(first);
+            return [coords];
+          })
+          .filter((c): c is [number, number][][] => c !== null),
+      };
+
+      if (multiPolygon.coordinates.length === 0) continue;
+
+      features.push({
+        type: 'Feature',
+        geometry: multiPolygon,
+        properties: {
+          osm_id,
+          name_ko,
+          name_en,
+          admin_level,
+        },
+      });
+    }
+
+    return features;
+  }
+
+  // 3. polygon을 연결하여 MultiPolygon ring 구성
+  private buildOrderedRings(
+    ways: { geometry: { lon: number; lat: number }[] }[],
+  ): [number, number][][] {
+    const toTuple = (p: { lon: number; lat: number }) =>
+      [p.lon, p.lat] as [number, number];
+    const rings: [number, number][][] = [];
+    const used = new Set<number>();
+
+    for (let i = 0; i < ways.length; i++) {
+      if (used.has(i)) continue;
+      const ring: [number, number][] = ways[i].geometry.map(toTuple);
+      used.add(i);
+
+      let closed = false;
+      while (!closed) {
+        const last = ring[ring.length - 1];
+        let found = false;
+
+        for (let j = 0; j < ways.length; j++) {
+          if (used.has(j)) continue;
+          const candidate = ways[j].geometry.map(toTuple);
+
+          if (this.arePointsEqual(candidate[0], last)) {
+            ring.push(...candidate.slice(1));
+            used.add(j);
+            found = true;
+            break;
+          } else if (
+            this.arePointsEqual(candidate[candidate.length - 1], last)
+          ) {
+            ring.push(...candidate.reverse().slice(1));
+            used.add(j);
+            found = true;
+            break;
+          }
+        }
+
+        if (!found || this.arePointsEqual(ring[0], ring[ring.length - 1]))
+          closed = true;
+      }
+
+      rings.push(ring);
+    }
+
+    return rings;
+  }
+
+  // 4. point 좌표 동일성 판단
+  private arePointsEqual(a: [number, number], b: [number, number]): boolean {
+    return Math.abs(a[0] - b[0]) < 1e-6 && Math.abs(a[1] - b[1]) < 1e-6;
+  }
+
+  // 5. GeoJSON 저장
+  private saveGeoJSONToFile(
+    countryName: string,
+    fc: FeatureCollection,
+  ): string {
+    const folderPath = path.join(
+      this.getOutputFolder(),
+      this.sanitizeName(countryName),
+      'admin_boundary',
+    );
+    const filePath = path.join(folderPath, 'admin_boundary.geojson');
+
+    fs.mkdirSync(folderPath, { recursive: true });
+    fs.writeFileSync(filePath, JSON.stringify(fc, null, 2), 'utf-8');
+
+    return filePath;
   }
 }

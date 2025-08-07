@@ -48,9 +48,9 @@ export class EnvConfigService {
     this.dbPort = getRequiredEnvStr(this.config, 'DB_PORT');
     this.dbUsername = getRequiredEnvStr(this.config, 'DB_USERNAME');
     this.dbDatabase = getRequiredEnvStr(this.config, 'DB_DATABASE');
+    this.schema = getRequiredEnvStr(this.config, 'DB_SCHEMA');
 
     this.dataPath = getRequiredEnvStr(this.config, 'DATA_PATH');
-    this.schema = getRequiredEnvStr(this.config, 'DATABASE_SCHEMA');
     this.logPath = getRequiredEnvStr(this.config, 'LOG_PATH');
 
     //Import-OSM-Data

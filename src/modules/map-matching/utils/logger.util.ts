@@ -56,7 +56,7 @@ export class LoggingUtil {
          SHOW search_path;
      `;
     await this.frameRepository.query(
-      `SET search_path TO ${this.envConfigService.schema};`,
+      `SET search_path TO ${this.envConfigService.schema}, public;`,
     );
     try {
       type SchemaQueryResult = { search_path: string };

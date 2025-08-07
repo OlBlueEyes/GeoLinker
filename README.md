@@ -19,7 +19,7 @@
 
 - **Node-Link Structuring**
 
-  - Assigns `start_node` and `end_node` IDs to each road Link via spatial joins and proximity filtering.
+  - Assigns `Source` and `Target` IDs to each road Link via spatial joins and proximity filtering.
 
 - **Map Matching Engine**
 
@@ -63,7 +63,7 @@
    Use PostGIS `ST_Split` and recursive re-splitting to divide road segments at node locations.
 
 5. **Assign Node IDs:**  
-   Attach `start_node` and `end_node` to each link using `ST_ClosestPoint`.
+   Attach `Source` and `Target` to each link using `ST_ClosestPoint`.
 
 6. **Match GPS Data:**  
    For each GPS trajectory (`Frame`), identify nearby candidate Links and match them using distance-based filtering + `ST_HausdorffDistance`.

@@ -1,7 +1,7 @@
 import { Module } from '@nestjs/common';
 import { InsertNodeLinkDataService } from './insert-node-link-data.service';
 import { InsertNodeLinkDataController } from './insert-node-link-data.controller';
-import { LoggingUtil } from 'src/common/utils/logger.util';
+import { LoggingUtil } from 'src/modules/map-matching/utils/logger.util';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { FinalNodeTable } from 'src/shared/entities/final_node_table.entity';
 import { FinalLinkTable } from 'src/shared/entities/final_link_table.entity';

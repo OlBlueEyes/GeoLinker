@@ -1,20 +1,26 @@
+// import { Injectable, Logger } from '@nestjs/common';
 import { Injectable } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { Frame } from 'src/shared/entities/frame.entity';
 import { Node } from 'src/shared/entities/node.entity';
 import { Link } from 'src/shared/entities/link.entity';
-import { FrameRow } from 'src/modules/map-matching/types/map-matching-types.interface';
-import { LoggingUtil } from '../../modules/map-matching/utils/logger.util';
+import { FrameRow } from '../types/map-matching-types.interface';
+import { LoggingUtil } from 'src/modules/map-matching/utils/logger.util';
+import {
+  LinkWithOppositeNodeDto,
+  QueryResultDto,
+} from '../dto/link-with-opposite-node.dto';
+import { LineStringWithNodeDto } from '../dto/line-string-with-node.dto';
+import { BestLinkResultDto } from '../dto/best-link-result.dto';
 import { EnvConfigService } from 'src/config/env-config.service';
 import { WINSTON_MODULE_PROVIDER } from 'nest-winston';
 import { Inject } from '@nestjs/common';
 import { Logger } from 'winston';
-import { LineStringWithNodeDto } from 'src/modules/map-matching/dto/line-string-with-node.dto';
-import { LinkWithOppositeNodeDto } from 'src/modules/map-matching/dto/link-with-opposite-node.dto';
 
 @Injectable()
 export class MapMatchingHelper {
+  // private readonly logger = new Logger(MapMatchingHelper.name);
   constructor(
     @Inject(WINSTON_MODULE_PROVIDER)
     private readonly logger: Logger,
@@ -42,10 +48,9 @@ export class MapMatchingHelper {
     repo: Repository<any>,
   ): Promise<string> {
     const { end } = this.loggingUtil.startTimer('createLineString', 'MATCHING');
-    type LineQueryResult = { line: string };
     const result = (await repo.query(
       `SELECT ST_MakeLine(ARRAY[${points.map((p) => `'${p}'`).join(', ')}]) AS line;`,
-    )) as LineQueryResult[];
+    )) as { line: string }[];
     end();
 
     return result[0].line;
@@ -68,20 +73,12 @@ export class MapMatchingHelper {
     frames: FrameRow[],
     startIdx: number,
     links: LinkWithOppositeNodeDto[],
-  ): Promise<
-    {
-      frameLineString: string;
-      projectedLineString: string;
-      lastFrameInSegment: number;
-      link: LinkWithOppositeNodeDto;
-      distances: number[];
-    }[]
-  > {
+  ): Promise<LineStringWithNodeDto[]> {
     const lineStringsWithNodes: LineStringWithNodeDto[] = [];
     for (const link of links) {
       const points: string[] = [];
       const projectedPoints: string[] = [];
-      const distances: number[] = []; // 250219
+      const distances: number[] = [];
       let lastFrameInSegment = startIdx;
       let previousDistance = Number.MAX_VALUE;
       for (let i = startIdx; i < frames.length; i++) {
@@ -93,8 +90,8 @@ export class MapMatchingHelper {
         const frameToPoint = await this.calculateDistanceBetweenPoints(
           frame.geom,
           projectedPoint,
-        ); // 250219
-        distances.push(frameToPoint); // 250219
+        );
+        distances.push(frameToPoint);
         const currentDistance = await this.calculateDistanceToNode(
           frame.geom,
           link.oppositeNode.id,
@@ -138,7 +135,7 @@ export class MapMatchingHelper {
         projectedPoints,
         this.frameRepository,
       );
-      // projectedLineString 길이 계산
+
       const projectedLineStringLength =
         await this.calculateLineStringLength(projectedLineString);
       this.logger.info(
@@ -178,7 +175,12 @@ export class MapMatchingHelper {
     return lineStringsWithNodes;
   }
 
-  // LineString 길이 계산 함수
+  /**
+   * PostGIS의 ST_Length를 사용하여 LineString 길이(m)를 계산
+   *
+   * @param lineString WKT 형식의 LineString 문자열
+   * @returns 거리(m). 계산 실패 시 0 반환
+   */
   async calculateLineStringLength(lineString: string): Promise<number> {
     const { end } = this.loggingUtil.startTimer(
       'calculateLineStringLength',
@@ -192,7 +194,13 @@ export class MapMatchingHelper {
     return result[0]?.length || 0;
   }
 
-  // Hausdorff 거리 계산
+  /**
+   * 두 LineString 간의 Hausdorff 거리 계산
+   *
+   * @param lineString 원본 Frame 기반 LineString
+   * @param projectedLineString 링크에 투영된 Point 기반 LineString
+   * @returns Hausdorff 거리 (m)
+   */
   async calculateHausdorffDistance(
     lineString: string,
     projectedLineString: string,
@@ -209,6 +217,13 @@ export class MapMatchingHelper {
     return result[0]?.distance || Number.MAX_VALUE;
   }
 
+  /**
+   * 두 점(Point) 간의 거리 계산
+   *
+   * @param pointGeom1 첫 번째 점 (WKT)
+   * @param pointGeom2 두 번째 점 (WKT)
+   * @returns 거리(m). 계산 실패 시 MAX_VALUE 반환
+   */
   async calculateDistanceBetweenPoints(
     pointGeom1: string,
     pointGeom2: string,
@@ -220,7 +235,13 @@ export class MapMatchingHelper {
     return result[0]?.distance || Number.MAX_VALUE;
   }
 
-  // Node와 Frame 간의 거리 계산
+  /**
+   * 주어진 Node와 Frame 간의 거리 계산
+   *
+   * @param frameGeom Frame의 위치 (WKT)
+   * @param nodeId 거리 측정 대상 Node ID
+   * @returns 거리(m)
+   */
   private async calculateDistanceToNode(
     frameGeom: string,
     nodeId: number,
@@ -233,6 +254,13 @@ export class MapMatchingHelper {
     return result[0]?.distance || Number.MAX_VALUE;
   }
 
+  /**
+   * 주어진 Frame 위치에 대해 해당 링크 상의 가장 가까운 지점을 계산
+   *
+   * @param frameGeom Frame Point WKT
+   * @param linkGeom Link LineString WKT
+   * @returns 해당 링크 위의 투영된 지점 (WKT)
+   */
   async getProjectedPointOnLink(
     frameGeom: string,
     linkGeom: string,
@@ -244,6 +272,12 @@ export class MapMatchingHelper {
     return result[0]?.point;
   }
 
+  /**
+   * 링크 ID 기준으로 중복 제거
+   *
+   * @param links 중복 가능성이 있는 링크 배열
+   * @returns 중복 제거된 링크 배열
+   */
   removeDuplicateLinks(
     links: LinkWithOppositeNodeDto[],
   ): LinkWithOppositeNodeDto[] {
@@ -254,7 +288,12 @@ export class MapMatchingHelper {
     return Array.from(uniqueLinksMap.values());
   }
 
-  // Frame에서 가장 가까운 Node 찾기
+  /**
+   * Frame 위치 기준으로 가장 가까운 Node를 검색 (PostGIS <-> 연산 사용)
+   *
+   * @param frameGeom WKT 형식의 Frame 지오메트리
+   * @returns 가장 가까운 Node 객체 { id, geom }
+   */
   async findClosestNode(
     frameGeom: string,
   ): Promise<{ id: number; geom: string } | null> {
@@ -266,31 +305,22 @@ export class MapMatchingHelper {
     return result[0] || null;
   }
 
-  // 각 LineString에 대해 Hausdorff 거리 계산 및 최적 Link 선택
+  /**
+   * 각 LineString과 링크 사이의 유사도를 측정하여 가장 유사한 Link 반환
+   *
+   * @param lineStringsWithNodes 각 링크별 Frame/Projected LineString 정보
+   * @returns 최적 링크 정보 (BestLinkResultDto) 또는 null
+   *
+   * @remarks
+   * - 모든 링크가 너무 짧은 경우 fallback으로 가장 긴 링크를 선택할 수 있음
+   * - 유사도는 Hausdorff 거리 기반으로 평가
+   */
   async findBestLinkForLineStrings(
-    lineStringsWithNodes: {
-      frameLineString: string;
-      projectedLineString: string;
-      lastFrameInSegment: number;
-      link: LinkWithOppositeNodeDto;
-      distances: number[];
-    }[],
-  ): Promise<{
-    link: LinkWithOppositeNodeDto;
-    lastFrameInSegment: number;
-    distances: number[];
-  } | null> {
-    let bestLink: {
-      link: LinkWithOppositeNodeDto;
-      lastFrameInSegment: number;
-      distances: number[];
-    } | null = null;
+    lineStringsWithNodes: LineStringWithNodeDto[],
+  ): Promise<BestLinkResultDto | null> {
+    let bestLink: BestLinkResultDto | null = null;
 
-    let fallbackLink: {
-      link: LinkWithOppositeNodeDto;
-      lastFrameInSegment: number;
-      distances: number[];
-    } | null = null;
+    let fallbackLink: BestLinkResultDto | null = null;
 
     let bestHausdorffDistance = Number.MAX_VALUE;
     let maxProjectedLineStringLength = 0;
@@ -300,13 +330,7 @@ export class MapMatchingHelper {
       lastFrameInSegment,
       link,
       distances,
-    } of lineStringsWithNodes as {
-      frameLineString: string;
-      projectedLineString: string;
-      lastFrameInSegment: number;
-      link: LinkWithOppositeNodeDto;
-      distances: number[];
-    }[]) {
+    } of lineStringsWithNodes) {
       // projectedLineString의 길이 계산
       const projectedLineStringLength =
         await this.calculateLineStringLength(projectedLineString);
@@ -332,7 +356,9 @@ export class MapMatchingHelper {
       );
 
       this.logger.info(
-        `[MAP-MATCHING] file: matchFrameAndLinkData.ts:283 ~ projectedLineString: ${JSON.stringify(projectedLineString)}`,
+        `[MAP-MATCHING] file: matchFrameAndLinkData.ts:283 ~ projectedLineString: ${JSON.stringify(
+          projectedLineString,
+        )}`,
         this.envConfigService.matchedLog,
       );
       this.logger.info(
@@ -351,7 +377,11 @@ export class MapMatchingHelper {
 
       if (!bestLink && fallbackLink) {
         this.logger.info(
-          `[MAP-MATCHING] All links are too short, selecting the fallback link: ${JSON.stringify(fallbackLink, null, 2)}`,
+          `[MAP-MATCHING] All links are too short, selecting the fallback link: ${JSON.stringify(
+            fallbackLink,
+            null,
+            2,
+          )}`,
           this.envConfigService.matchedLog,
         );
         bestLink = fallbackLink;
@@ -360,6 +390,14 @@ export class MapMatchingHelper {
     return bestLink;
   }
 
+  /**
+   * 기준 Node 기준으로 BBox 내부의 후보 링크들 중 가까운 링크 반환
+   *
+   * @param candidateLinkIds 후보 링크 ID 배열
+   * @param frameGeom 현재 Frame 위치 (WKT)
+   * @param currentNodeId 현재 기준 Node ID
+   * @returns 후보 링크와 반대 Node 정보를 포함한 배열
+   */
   async getNearbyLinksFromCandidates(
     candidateLinkIds: number[],
     frameGeom: string,
@@ -417,24 +455,30 @@ export class MapMatchingHelper {
         FROM node_distances;
         `,
       [candidateLinkIds, frameGeom, currentNodeId],
-    )) as LinkWithOppositeNodeDto[];
+    )) as QueryResultDto[];
     return links.map((link) => ({
       linkid: link.linkid,
-      linkGeom: link.linkGeom,
-      linkGeomText: link.linkGeomText,
+      linkGeom: link.link_geom,
+      linkGeomText: link.link_geom_text,
       oneway: link.oneway,
       highway: link.highway,
       layer: link.layer,
       source: link.source,
       target: link.target,
       oppositeNode: {
-        id: link.oppositeNode.id,
-        geom: link.oppositeNode.geom,
+        id: link.opposite_node_id,
+        geom: link.opposite_node_geom,
       },
     }));
   }
 
-  // Node와 연결된 Link 및 반대 Node를 가져오기
+  /**
+   * 현재 Node에 연결된 링크들과 해당 링크의 반대편 Node 정보 조회
+   *
+   * @param candidateLinkIds 후보 링크 ID 목록
+   * @param nodeId 기준이 되는 Node ID
+   * @returns 각 링크와 반대 Node 정보를 담은 배열
+   */
   async getLinksAndOppositeNodesFromCandidates(
     candidateLinkIds: number[],
     nodeId: number,
@@ -445,15 +489,15 @@ export class MapMatchingHelper {
           SELECT * FROM ${this.envConfigService.schema}.link WHERE id = ANY($1)
         )
         SELECT
-          cl.id AS linkid,
-          cl.geom AS link_geom,
+          cl.id AS linkid, 
+          cl.geom AS link_geom, 
           ST_AsText(cl.geom) AS link_geom_text,
           cl.name_ko,
           cl.name_en,
           cl.oneway,
           cl.highway,
           cl.layer,
-          cl.source,
+          cl.source, 
           cl.target,
           CASE
             WHEN cl.source = $2 THEN cl.target
@@ -470,24 +514,35 @@ export class MapMatchingHelper {
         WHERE cl.source = $2 OR cl.target = $2;
         `,
       [candidateLinkIds, nodeId],
-    )) as LinkWithOppositeNodeDto[];
+    )) as QueryResultDto[];
 
     return links.map((link) => ({
       linkid: link.linkid,
-      linkGeom: link.linkGeom,
-      linkGeomText: link.linkGeomText,
+      linkGeom: link.link_geom,
+      linkGeomText: link.link_geom_text,
       oneway: link.oneway,
       highway: link.highway,
       layer: link.layer,
       source: link.source,
       target: link.target,
       oppositeNode: {
-        id: link.oppositeNode.id,
-        geom: link.oppositeNode.geom,
+        id: link.opposite_node_id,
+        geom: link.opposite_node_geom,
       },
     }));
   }
 
+  /**
+   * 인접한 프레임 2개 이상을 활용하여 차량의 주행 방향 벡터 추정
+   *
+   * @param frames 전체 Frame 목록
+   * @param currentIndex 현재 기준 인덱스
+   * @returns 방향 벡터 [dx, dy] 또는 null
+   *
+   * @remarks
+   * - 유효한 방향 벡터를 구할 수 없는 경우 null 반환
+   * - 거리 기준은 gpsThreshold(m) 이하일 때만 사용
+   */
   async getValidDirectionVector(
     frames: FrameRow[],
     currentIndex: number,
@@ -584,6 +639,13 @@ export class MapMatchingHelper {
     return vector;
   }
 
+  /**
+   * 두 점 좌표 간 방향 벡터(normalized)를 계산
+   *
+   * @param p1 시작점 [x, y]
+   * @param p2 끝점 [x, y]
+   * @returns 단위 방향 벡터 [dx, dy]
+   */
   private calculateDirectionVectorFromXY(
     p1: [number, number],
     p2: [number, number],
@@ -602,6 +664,13 @@ export class MapMatchingHelper {
     return length === 0 ? [0, 0] : [dx / length, dy / length];
   }
 
+  /**
+   * 두 방향 벡터 간 코사인 유사도를 계산 (1에 가까울수록 방향이 동일)
+   *
+   * @param v1 벡터1
+   * @param v2 벡터2
+   * @returns 유사도 (-1 ~ 1)
+   */
   private calculateCosineSimilarity(
     v1: [number, number],
     v2: [number, number],
@@ -613,13 +682,24 @@ export class MapMatchingHelper {
     return dot / (mag1 * mag2);
   }
 
-  // 2. 기존 isLinkDirectionInvalid 수정
+  /**
+   * 현재 차량 진행 방향과 링크 방향이 반대인 경우 해당 링크를 제외할지 판단
+   *
+   * @param link 후보 링크 정보
+   * @param frames Frame 목록
+   * @param currentIndex 현재 기준 Frame 인덱스
+   * @returns 반대 방향일 경우 true, 아니면 false
+   */
   async isLinkDirectionInvalid(
     link: LinkWithOppositeNodeDto,
     frames: FrameRow[],
     currentIndex: number,
   ): Promise<boolean> {
     const highwayType = link.highway?.toLowerCase();
+    this.logger.info(
+      `[MAP-MATCHING] MapMatchingHelper ~ highwayType:${highwayType}`,
+      this.envConfigService.matchedLog,
+    );
     const isOneWay = link.oneway === 'yes';
     const isMajor = [
       'motorway',
@@ -640,7 +720,9 @@ export class MapMatchingHelper {
       currentIndex,
     );
     this.logger.info(
-      `[MAP-MATCHING] AdvancedMapMatching ~ isLinkDirectionInvalid - vehicleVector: frame=${frames[currentIndex].id} - ${JSON.stringify(vehicleVector)}`,
+      `[MAP-MATCHING] AdvancedMapMatching ~ isLinkDirectionInvalid - vehicleVector: frame=${
+        frames[currentIndex].id
+      } - ${JSON.stringify(vehicleVector)}`,
       this.envConfigService.matchedLog,
     );
     if (!vehicleVector || (vehicleVector[0] === 0 && vehicleVector[1] === 0))
@@ -651,7 +733,9 @@ export class MapMatchingHelper {
     );
     const coords = link.linkGeomText.match(/[-\d.]+ [-\d.]+/g);
     this.logger.info(
-      `[MAP-MATCHING] AdvancedMapMatching ~ isLinkDirectionInvalid - coords: coords=${JSON.stringify(coords)} - ${link.linkGeomText}`,
+      `[MAP-MATCHING] AdvancedMapMatching ~ isLinkDirectionInvalid - coords: coords=${JSON.stringify(coords)} - ${
+        link.linkGeomText
+      }`,
       this.envConfigService.matchedLog,
     );
     if (!Array.isArray(coords) || coords.length < 2) return false;
@@ -664,7 +748,9 @@ export class MapMatchingHelper {
       [tgt[0], tgt[1]],
     );
     this.logger.info(
-      `[MAP-MATCHING] AdvancedMapMatching ~ isLinkDirectionInvalid - linkVector: link=${link.linkid} - ${JSON.stringify(linkVector)}`,
+      `[MAP-MATCHING] AdvancedMapMatching ~ isLinkDirectionInvalid - linkVector: link=${link.linkid} - ${JSON.stringify(
+        linkVector,
+      )}`,
       this.envConfigService.matchedLog,
     );
 
@@ -680,6 +766,18 @@ export class MapMatchingHelper {
     return similarity < 0;
   }
 
+  /**
+   * 링크의 중간 지점으로 진입했는지 판단하여 해당 링크를 제외할지 결정
+   *
+   * @param link 검사할 링크
+   * @param frameGeom 현재 Frame 위치 (WKT)
+   * @param frameRepo Frame Repository
+   * @param currentNodeId 현재 기준 Node ID
+   * @returns 중간 진입으로 간주되는 경우 true
+   *
+   * @remarks
+   * - LineLocatePoint 위치가 0.3~0.7 사이 & 양끝점과의 거리가 10m 이상인 경우 중간 진입으로 간주
+   */
   async shouldExcludeLinkDueToMidEntryOnLayerLink(
     link: LinkWithOppositeNodeDto,
     frameGeom: string,

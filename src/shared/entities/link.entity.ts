@@ -1,4 +1,10 @@
-import { Entity, PrimaryGeneratedColumn, Column, JoinColumn, LineString } from 'typeorm';
+import {
+  Entity,
+  PrimaryGeneratedColumn,
+  Column,
+  JoinColumn,
+  LineString,
+} from 'typeorm';
 
 @Entity('datahub_0430.link')
 export class Link {
@@ -33,8 +39,8 @@ export class Link {
   highway: string;
 
   @Column({ type: 'int' })
-  start_node: number;
+  source: number;
 
   @Column({ type: 'int' })
-  end_node: number;
+  target: number;
 }

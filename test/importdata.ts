@@ -19,7 +19,7 @@ import {
   OverpassResponse,
 } from 'src/common/types/overpass-element.interface';
 import { WINSTON_MODULE_PROVIDER } from 'nest-winston';
-import { EnvConfigService } from 'src/config/env-config.service';
+import { EnvSettings } from 'src/modules/map-matching/utils/env-settings';
 import { Inject } from '@nestjs/common';
 import { Logger } from 'winston';
 import { OSM_COUNTRIES } from 'src/common/constants/osm-country.constants';
@@ -33,7 +33,7 @@ export class ImportOsmDataService {
     private readonly httpService: HttpService,
     private configService: ConfigService,
     private readonly dataSource: DataSource,
-    private readonly envConfigService: EnvConfigService,
+    private readonly envSettings: EnvSettings,
   ) {}
 
   async processNodeLinkData(city: string) {
@@ -150,7 +150,7 @@ export class ImportOsmDataService {
         if (areaInfoList.length < 2) {
           this.logToFile(
             `admin_level=4 insufficient results (${areaInfoList.length}), retrying with admin_level=6`,
-            this.envConfigService.dataImport,
+            this.envSettings.import.dataImport,
           );
           this.logger.info(
             `[IMPORT] admin_level=4 insufficient results (${areaInfoList.length}), retrying with admin_level=6`,
@@ -287,7 +287,7 @@ export class ImportOsmDataService {
           success = true;
           const completeMsg = `${admin_en}(${admin_ko}) (${areaId}) completed`;
           console.log(`completeMsg`);
-          this.logToFile(completeMsg, this.envConfigService.dataImport);
+          this.logToFile(completeMsg, this.envSettings.import.dataImport);
           this.logger.info(
             `[IMPORT] ${admin_en}(${admin_ko}) (${areaId}) completed`,
           );
@@ -298,7 +298,7 @@ export class ImportOsmDataService {
               ? `${admin_en} (${areaId}) attempt ${attempts} failed: ${err.message}`
               : `${admin_en} (${areaId}) attempt ${attempts} failed: unknown error`;
           console.log(`attemptFaileMsg`);
-          this.logToFile(attemptFaileMsg, this.envConfigService.dataImport);
+          this.logToFile(attemptFaileMsg, this.envSettings.import.dataImport);
           this.logger.error(`[IMPORT ERROR] ${attemptFaileMsg}`);
         }
       }
@@ -343,7 +343,7 @@ export class ImportOsmDataService {
           this.logger.info(`[IMPORT] ${retryMsg}`);
 
           console.log(`retryMsg`);
-          this.logToFile(retryMsg, this.envConfigService.dataImport);
+          this.logToFile(retryMsg, this.envSettings.import.dataImport);
         }
       } catch (err) {
         const failMsg =
@@ -351,7 +351,7 @@ export class ImportOsmDataService {
             ? `Final failure: ${admin_en} (${areaId}) - ${err.message}`
             : `Final failure: ${admin_en} (${areaId}) - unknown error`;
         console.log(`failMsg`);
-        this.logToFile(failMsg, this.envConfigService.dataImport);
+        this.logToFile(failMsg, this.envSettings.import.dataImport);
         this.logger.error(`[IMPORT ERROR] ${failMsg}`);
       }
     }
@@ -611,7 +611,7 @@ export class ImportOsmDataService {
       fs.writeFileSync(filePath, JSON.stringify(data, null, 2), 'utf-8');
       const jsonSavedMsg = `GeoJSON data saved to ${filePath}`;
       console.log(jsonSavedMsg);
-      this.logToFile(jsonSavedMsg, this.envConfigService.dataImport);
+      this.logToFile(jsonSavedMsg, this.envSettings.import.dataImport);
       this.logger.info(`[IMPORT] ${jsonSavedMsg}`);
     } catch (error) {
       const jsonErrorMsg =
@@ -619,7 +619,7 @@ export class ImportOsmDataService {
           ? `Failed to save GeoJSON data: ${error.message}`
           : 'Failed to save GeoJSON data: unknown error';
       console.log(jsonErrorMsg);
-      this.logToFile(jsonErrorMsg, this.envConfigService.dataImport);
+      this.logToFile(jsonErrorMsg, this.envSettings.import.dataImport);
       this.logger.error(`[IMPORT ERROR] ${jsonErrorMsg}`);
 
       throw error;

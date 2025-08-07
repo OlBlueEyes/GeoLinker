@@ -1,4 +1,10 @@
-import { Entity, PrimaryGeneratedColumn, Column, JoinColumn, LineString } from 'typeorm';
+import {
+  Entity,
+  PrimaryGeneratedColumn,
+  Column,
+  JoinColumn,
+  LineString,
+} from 'typeorm';
 
 @Entity('datahub_0430.final_link_table')
 export class FinalLinkTable {
@@ -33,10 +39,10 @@ export class FinalLinkTable {
   highway: string;
 
   @Column({ type: 'int' })
-  start_node: number;
+  source: number;
 
   @Column({ type: 'int' })
-  end_node: number;
+  target: number;
 
   @Column({ type: 'timestamp', nullable: true })
   expiration_date: Date;

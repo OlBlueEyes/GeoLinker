@@ -7,8 +7,8 @@ import { FeatureCollection, LineString, Point } from 'geojson';
 import {
   SplitLinkSegment,
   OsmLinkRow,
-} from 'src/common/types/link-data.interface';
-import { LoggingUtil } from 'src/common/utils/logger.util';
+} from '../map-matching/types/link-data.interface';
+import { LoggingUtil } from 'src/modules/map-matching/utils/logger.util';
 import { OSM_COUNTRIES } from 'src/common/constants/osm-country.constants';
 import { WINSTON_MODULE_PROVIDER } from 'nest-winston';
 import { Inject } from '@nestjs/common';
@@ -224,6 +224,7 @@ export class SplitOsmDataService {
         osm_type VARCHAR(255),
         highway VARCHAR(255),
         oneway VARCHAR(255),
+        layer VARCHAR(255),
         name_ko VARCHAR(255),
         name_en VARCHAR(255)
       );
@@ -237,6 +238,7 @@ export class SplitOsmDataService {
         osm_type VARCHAR(255),
         highway VARCHAR(255),
         oneway VARCHAR(255),
+        layer VARCHAR(255),
         name_ko VARCHAR(255),
         name_en VARCHAR(255)
       );
@@ -257,12 +259,13 @@ export class SplitOsmDataService {
 
     await this.dataSource.query(
       `
-      INSERT INTO ${tempLinkTable} (geom, osm_id, osm_type, highway, oneway, name_ko, name_en)
+      INSERT INTO ${tempLinkTable} (geom, osm_id, osm_type, highway, oneway, layer, name_ko, name_en)
       SELECT ST_SetSRID(ST_GeomFromGeoJSON(feature->'geometry')::geometry, 4326),
         (feature->'properties'->>'osm_id')::BIGINT,
         feature->'properties'->>'osm_type',
         feature->'properties'->>'highway',
         feature->'properties'->>'oneway',
+        feature->'properties'->>'layer',
         feature->'properties'->>'name_ko',
         feature->'properties'->>'name_en'
       FROM jsonb_array_elements($1::jsonb->'features') AS feature
@@ -286,12 +289,12 @@ export class SplitOsmDataService {
     splitLinksTable: string,
   ) {
     await this.dataSource.query(`
-      INSERT INTO ${splitLinksTable} (geom, osm_id, osm_type, highway, oneway, name_ko, name_en)
+      INSERT INTO ${splitLinksTable} (geom, osm_id, osm_type, highway, oneway, layer, name_ko, name_en)
       SELECT (ST_Dump(ST_Split(tl.geom, ST_Collect(tn.geom)))).geom,
-      tl.osm_id, tl.osm_type, tl.highway, tl.oneway, tl.name_ko, tl.name_en
+      tl.osm_id, tl.osm_type, tl.highway, tl.oneway, tl.layer, tl.name_ko, tl.name_en
       FROM ${tempLinkTable} tl
       LEFT JOIN ${tempNodeTable} tn ON ST_DWithin(tl.geom, tn.geom, 0.00001)
-      GROUP BY tl.id, tl.geom, tl.osm_id, tl.osm_type, tl.highway, tl.oneway, tl.name_ko, tl.name_en
+      GROUP BY tl.id, tl.geom, tl.osm_id, tl.osm_type, tl.highway, tl.oneway, tl.layer, tl.name_ko, tl.name_en
     `);
   }
 
@@ -301,7 +304,7 @@ export class SplitOsmDataService {
   ) {
     const problematicSegments: SplitLinkSegment[] = await this.dataSource
       .query(`
-      SELECT id, geom, osm_id, osm_type, highway, oneway, name_ko, name_en
+      SELECT id, geom, osm_id, osm_type, highway, oneway, layer, name_ko, name_en
       FROM ${splitLinksTable}
       WHERE NOT ST_IsSimple(geom)
         OR (SELECT COUNT(*) FROM ${tempNodeTable} n WHERE ST_DWithin(n.geom, ${splitLinksTable}.geom, 0.00001)) >= 3
@@ -317,8 +320,17 @@ export class SplitOsmDataService {
     let resplitCount = 0;
 
     for (const segment of problematicSegments) {
-      const { id, geom, osm_id, osm_type, highway, oneway, name_ko, name_en } =
-        segment;
+      const {
+        id,
+        geom,
+        osm_id,
+        osm_type,
+        highway,
+        oneway,
+        layer,
+        name_ko,
+        name_en,
+      } = segment;
 
       // 주변 Node 모으기
       const nodesResult: { geom: string }[] = await this.dataSource.query(`
@@ -373,13 +385,22 @@ export class SplitOsmDataService {
         for (const r of splitResult) {
           await this.dataSource.query(
             `
-            INSERT INTO ${splitLinksTable} (geom, osm_id, osm_type, highway, oneway, name_ko, name_en)
+            INSERT INTO ${splitLinksTable} (geom, osm_id, osm_type, highway, oneway, layer, name_ko, name_en)
             VALUES (
               $1::geometry,
-              $2::bigint, $3::varchar, $4::varchar, $5::varchar, $6::varchar, $7::varchar
+              $2::bigint, $3::varchar, $4::varchar, $5::varchar, $6::varchar, $7::varchar, $8::varchar
             )
           `,
-            [r.geom, osm_id, osm_type, highway, oneway, name_ko, name_en],
+            [
+              r.geom,
+              osm_id,
+              osm_type,
+              highway,
+              oneway,
+              layer,
+              name_ko,
+              name_en,
+            ],
           );
         }
 
@@ -411,14 +432,23 @@ export class SplitOsmDataService {
     const selfIntersectedSegments: SplitLinkSegment[] = await this.dataSource
       .query(`
       SELECT id, ST_AsGeoJSON(geom) AS geom,
-             osm_id, osm_type, highway, oneway, name_ko, name_en
+             osm_id, osm_type, highway, oneway, layer, name_ko, name_en
       FROM ${splitLinksTable}
       WHERE NOT ST_IsSimple(geom)
     `);
 
     for (const segment of selfIntersectedSegments) {
-      const { id, geom, osm_id, osm_type, highway, oneway, name_ko, name_en } =
-        segment;
+      const {
+        id,
+        geom,
+        osm_id,
+        osm_type,
+        highway,
+        oneway,
+        layer,
+        name_ko,
+        name_en,
+      } = segment;
       const geomObj = JSON.parse(geom) as {
         type: 'LineString';
         coordinates: [number, number][];
@@ -466,10 +496,10 @@ export class SplitOsmDataService {
           .join(', ');
 
         const insertSql = `
-          INSERT INTO ${splitLinksTable} (geom, osm_id, osm_type, highway, oneway, name_ko, name_en)
+          INSERT INTO ${splitLinksTable} (geom, osm_id, osm_type, highway, oneway, layer, name_ko, name_en)
           VALUES (
             ST_SetSRID(ST_MakeLine(ARRAY[${pointsSql}]), 4326),
-            $1, $2, $3, $4, $5, $6
+            $1, $2, $3, $4, $5, $6, $7
           )
         `;
 
@@ -478,6 +508,7 @@ export class SplitOsmDataService {
           osm_type,
           highway,
           oneway,
+          layer,
           name_ko,
           name_en,
         ]);
@@ -510,7 +541,7 @@ export class SplitOsmDataService {
     splitLinksTable: string,
   ): Promise<FeatureCollection<LineString>> {
     const rows: OsmLinkRow[] = await this.dataSource.query(`
-      SELECT ST_AsGeoJSON(geom) AS geometry, osm_id, osm_type, highway, oneway, name_ko, name_en
+      SELECT ST_AsGeoJSON(geom) AS geometry, osm_id, osm_type, highway, oneway, layer, name_ko, name_en
       FROM ${splitLinksTable}
     `);
 
@@ -522,6 +553,7 @@ export class SplitOsmDataService {
         osm_type: row.osm_type,
         highway: row.highway,
         oneway: row.oneway,
+        layer: row.layer,
         name_ko: row.name_ko,
         name_en: row.name_en,
       },
